@@ -1,0 +1,391 @@
+Index: include/rsi_zigb_config.h
+===================================================================
+--- include/rsi_zigb_config.h	(revision 4863)
++++ include/rsi_zigb_config.h	(working copy)
+@@ -22,7 +22,7 @@
+  the LSB to  the 26th bit, consisting of 16 channels represented by
+  each bit.
+ ******************************************************************************/
+-#define g_CHANNEL_MASK_c                   0x00800000U
++#define g_CHANNEL_MASK_c                   0x02000000U
+ 
+ /*******************************************************************************
+  g_STARTUP_CONTROL_c
+Index: src/rsi_zigb_api_test.c
+===================================================================
+--- src/rsi_zigb_api_test.c	(revision 4863)
++++ src/rsi_zigb_api_test.c	(working copy)
+@@ -46,7 +46,7 @@
+ extern rsi_zigb_app_cb_t   rsi_zigb_app_cb;
+ /*===========================================================================
+  *
+- * @fn          void rsi_zigb_aapi_test(void)
++ * @fn          void rsi_zigb_api_test(void)
+  * @brief       Handle API test cases
+  * @param[in]   none
+  * @param[out]  none
+@@ -398,6 +398,25 @@
+             RSI_DPRINT(RSI_PL1," FAIL\n");
+             TCFAIL
+           }
++          rsi_zigb_get_short_addr_for_specified_ieee_addr( api_test_var->parent_ieee);
++        }
++        break;
++
++
++        case ZIGBEEGETSHORTADDRFORSPECIFIEDIEEEADDR :
++        {
++          RSI_DPRINT(RSI_PL1, "rsi_zigb_get_short_addr_for_specified_ieee_addr:");
++          
++          if(resp->uCmdRspPayLoad.DevShortAddr.short_addr == api_test_var->parent_short_addr)
++          {
++            RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++            TCSUCCESS
++          }
++          else
++          {
++            RSI_DPRINT(RSI_PL1," FAIL\n");
++            TCFAIL
++          }
+           rsi_zigb_read_neighbor_table_entry( 0x0);
+         }
+         break;
+@@ -687,16 +706,8 @@
+         case ZIGBEEGETMAXAPSPAYLOADLENGTH :
+         {
+           RSI_DPRINT(RSI_PL1, "rsi_zigb_get_max_aps_payload_length:");
+-          if(resp->uCmdRspPayLoad.statusResp.status == 0x3e)
+-          {
+-            RSI_DPRINT(RSI_PL1, " SUCCESS\n");
+-            TCSUCCESS
+-          }
+-          else
+-          {
+-            RSI_DPRINT(RSI_PL1," FAIL\n");
+-            TCFAIL
+-          }
++          RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++          TCSUCCESS
+ 
+           rsi_zigb_get_key_table_entry(api_test_var->key_index, &api_test_var->KeyStruct);
+         }
+@@ -980,6 +991,8 @@
+             RSI_DPRINT(RSI_PL1, " SUCCESS\n");
+             TCSUCCESS
+           }
++          RSI_DPRINT(RSI_PL1,"\n ****** End of API_TEST ******* \n");
++          return 0;
+         }
+         break;
+ 
+@@ -1029,8 +1042,6 @@
+         case APPSCANCOMPLETEHANDLER:
+         {
+           rsi_zigb_app_cb_handler(api_test_var->cmd, (uint8_t *)&resp->uCmdRspPayLoad.uRspData);
+-          RSI_DPRINT(RSI_PL1,"\n ****** End of API_TEST ******* \n");
+-          return 0;
+         }
+         break;
+ 
+@@ -1104,6 +1115,26 @@
+   static int power_desc_count = 0,node_desc_count = 0,bind_count = 0,unbind_count = 0,active_ep_count = 0,ieee_addr_count = 0;
+   static int simple_desc_count = 0,network_addr_count = 0,match_desc_count = 0; 
+   rsi_zigb_app_info_t *app_info = &rsi_zigb_app_info;
++
++#if 1
++  int i;
++  printf("\n Called AppHandleDataIndication \n ");
++  printf("\n Rcvd Data from : 0x%x", pDataIndication->dest_address.short_address);
++  printf("\n Rcvd Data dest ep : 0x%x", pDataIndication->dest_endpoint);
++  printf("\n Rcvd Data src ep : 0x%x", pDataIndication->src_endpoint);
++  printf("\n Data of size 0x%x = ", pDataIndication->asdulength);
++  printf("\n Rcvd profile id : 0x%x", pDataIndication->profile_id);
++  printf("\n Rcvd cluster id : 0x%x", pDataIndication->cluster_id);
++  printf("\n Rcvd security_status : 0x%x\n", pDataIndication->security_status);
++
++  for(i = 0; i < pDataIndication->asdulength; i++)
++    printf("  0x%x", pDataIndication->a_asdu[i]);
++
++  printf("\n");
++#endif
++
++
++
+   if( pDataIndication->cluster_id == 0x8003)//0x8003: power descriptor response
+   { 
+     if(!power_desc_count){
+@@ -1129,9 +1160,15 @@
+     }
+     power_desc_count++;
+ 
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) {
++    if(device_type == ZigBeeRouter) {
+       rsi_zigb_zdp_send_node_descriptor_request(api_test_var->parent_short_addr,api_test_var->aps_ack_required);
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_zdp_send_node_descriptor_request(app_cb_ptr->short_addr,api_test_var->aps_ack_required);
++    }
++    else {
++      /* Do nothing */
++    }
+   }
+ 
+   if( pDataIndication->cluster_id == 0x8002)//0x8002: node descriptor response
+@@ -1159,9 +1196,15 @@
+     }
+     node_desc_count++;
+     
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) {
++    if(device_type == ZigBeeRouter) {
+       rsi_zigb_simple_descriptor_request(api_test_var->parent_short_addr,api_test_var->end_pont_id);
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_simple_descriptor_request(app_cb_ptr->short_addr,api_test_var->end_pont_id);
++    }
++    else {
++      /* Do nothing */
++    }
+   }
+ 
+   if( pDataIndication->cluster_id == 0x8021)//0x8021: bind response
+@@ -1236,9 +1279,15 @@
+     }
+     active_ep_count++;
+     
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) {
++    if(device_type == ZigBeeRouter) {
+       rsi_zigb_zdp_send_power_descriptor_request(api_test_var->parent_short_addr,api_test_var->aps_ack_required);
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_zdp_send_power_descriptor_request(app_cb_ptr->short_addr,api_test_var->aps_ack_required);
++    }
++    else {
++      /* Do nothing */
++    }
+   }
+ 
+   if( pDataIndication->cluster_id == 0x8001)//0x8001: ieee addr response
+@@ -1265,7 +1314,7 @@
+       }
+     }
+     ieee_addr_count++;
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) {
++    if(device_type == ZigBeeRouter) {
+       rsi_zigb_send_match_descriptors_request(api_test_var->parent_short_addr, 
+         app_info->DeviceSimpleDesc->app_profile_id, 
+         (uint8_t*)app_info->DeviceSimpleDesc->p_incluster_list,
+@@ -1273,6 +1322,17 @@
+         (uint8_t*) app_info->DeviceSimpleDesc->p_outcluster_list,
+         app_info->DeviceSimpleDesc->outcluster_count, 1, api_test_var->broad_cast_addr);
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_send_match_descriptors_request(app_cb_ptr->short_addr, 
++        app_info->DeviceSimpleDesc->app_profile_id, 
++        (uint8_t*)app_info->DeviceSimpleDesc->p_incluster_list,
++        app_info->DeviceSimpleDesc->incluster_count, 
++        (uint8_t*) app_info->DeviceSimpleDesc->p_outcluster_list,
++        app_info->DeviceSimpleDesc->outcluster_count, 1, api_test_var->broad_cast_addr);
++    }
++    else {
++      /* Do nothing */
++    }
+         
+   }
+ 
+@@ -1301,9 +1361,19 @@
+     }
+     simple_desc_count++;
+     
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) { 
+-     rsi_zigb_bind_request(api_test_var->parent_short_addr , api_test_info->SelfAddress.IEEE_address, api_test_info->Source_EP, api_test_info->ClusterId, api_test_info->DestAddrMode, api_test_info->ParentAddress,api_test_info->Dest_EP, api_test_info->APSAckRequired);
++    if((device_type == ZigBeeRouter)) { 
++      rsi_zigb_bind_request(api_test_var->parent_short_addr , api_test_info->SelfAddress.IEEE_address, api_test_info->Source_EP, api_test_info->ClusterId, api_test_info->DestAddrMode, api_test_info->ParentAddress,api_test_info->Dest_EP, api_test_info->APSAckRequired);
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_bind_request(app_cb_ptr->short_addr, api_test_info->SelfAddress.IEEE_address, 
++                          api_test_info->Source_EP, api_test_info->ClusterId,
++                          2, api_test_info->ParentAddress ,
++                          api_test_info->Dest_EP, 
++                          api_test_info->APSAckRequired);
++    }
++    else {
++      /* Do nothing */
++    }
+   }
+ 
+   if( pDataIndication->cluster_id == 0x8000)//0x8000: network addr response
+@@ -1331,9 +1401,15 @@
+     }
+     network_addr_count++;
+     
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) {
++    if(device_type == ZigBeeRouter) {
+       rsi_zigb_zdp_send_ieee_addr_request(api_test_var->parent_short_addr,api_test_var->request_type,api_test_var->start_index,api_test_var->aps_ack_required);
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_zdp_send_ieee_addr_request(app_cb_ptr->short_addr,(BOOL)TRUE,api_test_var->start_index,api_test_var->aps_ack_required);
++    }
++    else {
++      /* Do nothing */
++    }
+   }
+ 
+   if( pDataIndication->cluster_id == 0x8006)//0x8006: Match decs response
+@@ -1361,9 +1437,15 @@
+     }
+     match_desc_count++;
+     
+-    if((device_type == ZigBeeRouter) || (device_type == ZigBeeCoordinator)) {
++    if(device_type == ZigBeeRouter) {
+       rsi_zigb_active_endpoints_request( api_test_var->parent_short_addr, api_test_var->aps_ack_required );
+     }
++    else if(device_type == ZigBeeCoordinator) {
++      rsi_zigb_active_endpoints_request( app_cb_ptr->short_addr, api_test_var->aps_ack_required );
++    }
++    else {
++      /* Do nothing */
++    }
+   }
+ 
+ }
+@@ -1748,6 +1830,25 @@
+             RSI_DPRINT(RSI_PL1," FAIL\n");
+             TCFAIL
+           }
++          rsi_zigb_get_short_addr_for_specified_ieee_addr( api_test_var->parent_ieee);
++        }
++        break;
++
++
++        case ZIGBEEGETSHORTADDRFORSPECIFIEDIEEEADDR :
++        {
++          RSI_DPRINT(RSI_PL1, "rsi_zigb_get_short_addr_for_specified_ieee_addr:");
++          
++          if(resp->uCmdRspPayLoad.DevShortAddr.short_addr == api_test_var->parent_short_addr)
++          {
++            RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++            TCSUCCESS
++          }
++          else
++          {
++            RSI_DPRINT(RSI_PL1," FAIL\n");
++            TCFAIL
++          }
+           rsi_zigb_read_neighbor_table_entry( 0x0);
+         }
+         break;
+@@ -1902,16 +2003,8 @@
+         case ZIGBEEGETMAXAPSPAYLOADLENGTH :
+         {
+           RSI_DPRINT(RSI_PL1, "rsi_zigb_get_max_aps_payload_length:");
+-          if(resp->uCmdRspPayLoad.statusResp.status == 0x3e)
+-          {
+-            RSI_DPRINT(RSI_PL1, " SUCCESS\n");
+-            TCSUCCESS
+-          }
+-          else
+-          {
+-            RSI_DPRINT(RSI_PL1," FAIL\n");
+-            TCFAIL
+-          }
++          RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++          TCSUCCESS
+ 
+           rsi_zigb_get_key_table_entry(api_test_var->key_index, &api_test_var->KeyStruct);
+         }
+@@ -2766,10 +2859,31 @@
+               RSI_DPRINT(RSI_PL1," FAIL\n");
+               TCFAIL
+             }
+-            rsi_zigb_get_route_table_entry(0x00);
++//            rsi_zigb_get_route_table_entry(0x00);
++
++          rsi_zigb_get_short_addr_for_specified_ieee_addr( api_test_var->get_ieee);
+           }
+           break;
+ 
++
++        case ZIGBEEGETSHORTADDRFORSPECIFIEDIEEEADDR :
++        {
++          RSI_DPRINT(RSI_PL1, "rsi_zigb_get_short_addr_for_specified_ieee_addr:");
++          
++          if(resp->uCmdRspPayLoad.DevShortAddr.short_addr ==  api_test_info->ParentAddress.short_address )
++          {
++            RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++            TCSUCCESS
++          }
++          else
++          {
++            RSI_DPRINT(RSI_PL1," FAIL\n");
++            TCFAIL
++          }
++          rsi_zigb_read_neighbor_table_entry( 0x0);
++        }
++        break;
++
+         case ZIGBEEREADNEIGHBORTABLEENTRY :
+           {
+             RSI_DPRINT(RSI_PL1, "rsi_zigb_read_neighbor_table_entry:");
+@@ -2919,8 +3033,9 @@
+         case ZIGBEEGETMAXAPSPAYLOADLENGTH :
+           {
+             RSI_DPRINT(RSI_PL1, "rsi_zigb_get_max_aps_payload_length:");
+-              RSI_DPRINT(RSI_PL1, " SUCCESS\n");
+-              TCSUCCESS
++            RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++            TCSUCCESS
++
+             rsi_zigb_get_key_table_entry(api_test_var->key_index, &api_test_var->KeyStruct);
+           }
+           break;
+@@ -3234,11 +3349,7 @@
+             RSI_DPRINT(RSI_PL1, " SUCCESS\n");
+             TCSUCCESS
+ 
+-            rsi_zigb_bind_request(app_cb_ptr->short_addr, api_test_info->SelfAddress.IEEE_address, 
+-                                  api_test_info->Source_EP, api_test_info->ClusterId,
+-                                  2, api_test_info->ParentAddress ,
+-                                  api_test_info->Dest_EP, 
+-                                  api_test_info->APSAckRequired);
++            rsi_zigb_zdp_send_nwk_addr_request(api_test_var->get_ieee, (BOOL)1, 0 );
+           }
+           break;
+ 
+@@ -3262,6 +3373,7 @@
+             /* Response is checked at Data indication Callback */
+           }
+           break;
++
+         case ZIGBEELEAVENETWORK:
+           {
+             RSI_DPRINT(RSI_PL1, "rsi_zigb_leave_network:");
+@@ -3329,12 +3441,28 @@
+               RSI_DPRINT(RSI_PL1," FAIL\n");
+               TCFAIL
+             }
++            rsi_zigb_broadcast_nwk_manager_request(0x0000, app_info->channel_mask);
++          }
++          break;
++
++        case ZIGBEEBROADCASTNWKMANAGERREQUEST:
++          {
++            RSI_DPRINT(RSI_PL1, "rsi_zigb_broadcast_nwk_manager_request:");
++            if(resp->uCmdRspPayLoad.statusResp.status == RSI_ZB_SUCCESS)
++            {
++              RSI_DPRINT(RSI_PL1, " SUCCESS\n");
++              TCSUCCESS
++            }
++            else
++            {
++              RSI_DPRINT(RSI_PL1," FAIL\n");
++              TCFAIL
++            }
+             rsi_zigb_leave_network();
+           }
+           break;
+ 
+ 
+-
+         case APPHANDLEDATACONFIRMATION:
+           {
+             if(!api_test_var->data_cnrfm_count)

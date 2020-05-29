@@ -1,0 +1,719 @@
+  Release           : RS911X.NB0.NL.GNU.LNX.2.0.RC6
+  Date              : 8-Apr-2020
+_______________________________________________________________
+ 	Copyright (C) Redpine Signals, Inc 2020
+_______________________________________________________________
+
+Release Status:
+===================
+
+	Test         ( )
+	Alpha        ( )
+	Beta         ( )
+	Production   (X)
+________________________________________________________________
+
+
+Supported Hardware:
+=======================
+RS911X-NB0-XXX Modules With SDIO / USB Interface
+
+Supported Linux Kernel Versions:
+================================
+Kernel versions from v3.18 to v5.3
+
+Interfaces Supported:
+=====================
+USB
+SDIO
+
+==============================================================
+New Features:
+=============
+Common:
+=======
+--None--
+
+Wi-Fi:
+=====
+1) Added debugfs entries for Power save configuration parameters
+2) Added support for USB v1.2 
+
+BT:
+==
+--None--
+
+Changes / Issues fixed:
+======================
+
+Wi-Fi:
+=====
+1) Fixed scan and bgscan issues.
+2) Fixed slow platforms failure while running full throughput.
+3) Added fixes to improve throughput.
+
+BT:
+===
+--None--
+
+Common Limitations/Features NOT Supported:
+------------------------------------------
+ 1)M15DB-T & M15DB modules are not supported
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) AMSDU TX is not supported
+2) Fragmentation is not supported.
+3) AMSDU's within AMPDU is not supported.
+4) WLAN Performance is less in dense environments.
+5) WLAN 2G 40Mhz has Performance issues.
+6) Digital Loopback is not supported
+7) PUF is not supported
+8) AP mode more than 32 clients not supported,AP + BT + BLE has only 4 clients support
+9) CW Mode is not supported
+10) RF Loopback modes M2,M3 are not supported
+11) USB ULP is not supported
+12) WMM-Admission Control is not supported
+13) LP Powersave using GPIO handshake is not supported
+
+Bluetooth Recommendations:
+---------------------------------------------
+1) In BLE, recommended range of Connection Interval in
+   i)  Power Save - 100ms to 1.28sec.
+   ii) BT Classic + BLE Dual Mode is >= 200ms.
+   iii)WLAN + BLE coex - 30ms to 4sec
+2) In BLE, during Connection, same values of Scan Interval and Scan Window is not recommended.
+3) In BT Classic, recommended value of Sniff Interval during Power Save is limited to 100ms(<= 100).
+4) In WLAN + BT Classic coex, for BT file transfer to work fine, recommended value of WLAN protocol DTIM is more 
+    than 3 and Beacon Interval is more than 200ms.
+
+Bluetooth Limitations/Features NOT Supported:
+---------------------------------------------
+1) BT Sniff mode does not work if BT multiple slaves feature is enabled
+2) When BT multiple slaves feature is enabled, Master to slave role switch will not happen
+3) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+4) In WLAN + BLE coex, if BLE Connection is established with small Connection Interval(< 15ms),
+    simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported. 
+5) Observed glitches in BT audio in coex mode when WiFi is connected
+6) Simultaneous slave & Master roles (Scatternet) is not supported.
+7) In BLE, if device is acting as Master/Slave, Scan Window (in set_scan_params and create_connection command)
+   shall be less than the exisitng Connection Interval.
+8) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+9) In BLE , if BLE Connection is established with small Connection Interval(< 15ms),
+   simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported.
+
+  Release           : RS911X.NB0.NL.GNU.LNX.2.0.RC5
+  Date              : 10-Feb-2020
+_______________________________________________________________
+ 	Copyright (C) Redpine Signals, Inc 2020
+_______________________________________________________________
+
+Release Status:
+===================
+
+	Test         (X)
+	Alpha        ( )
+	Beta         ( )
+	Production   ( )
+________________________________________________________________
+
+
+Supported Hardware:
+=======================
+RS911X-NB0-XXX Modules With SDIO / USB Interface
+
+Supported Linux Kernel Versions:
+================================
+Kernel versions from v3.18 to v5.3
+
+Interfaces Supported:
+=====================
+USB
+SDIO
+
+==============================================================
+New Features:
+=============
+Common:
+=======
+--None--
+
+Wi-Fi:
+=====
+--None--
+
+BT:
+==
+--None--
+
+Changes / Issues fixed:
+======================
+
+1) Addressed connection timeout issues with power save.
+2) Addressed SDIO RX failures on low end platforms.
+3) Fixed suspend /resume issues.
+
+BT:
+===
+--None--
+
+Common Limitations/Features NOT Supported:
+------------------------------------------
+ 1)M15DB-T & M15DB modules are not supported
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) AMSDU TX is not supported
+2) Fragmentation is not supported.
+3) AMSDU's within AMPDU is not supported.
+4) WLAN Performance is less in dense environments.
+5) WLAN 2G 40Mhz has Performance issues.
+6) Digital Loopback is not supported
+7) PUF is not supported
+8) AP mode more than 32 clients not supported,AP + BT + BLE has only 4 clients support
+9) CW Mode is not supported
+10) RF Loopback modes M2,M3 are not supported
+11) USB ULP is not supported
+12) WMM-Admission Control is not supported
+13) LP Powersave using GPIO handshake is not supported
+
+Bluetooth Recommendations:
+---------------------------------------------
+1) In BLE, recommended range of Connection Interval in
+   i)  Power Save - 100ms to 1.28sec.
+   ii) BT Classic + BLE Dual Mode is >= 200ms.
+   iii)WLAN + BLE coex - 30ms to 4sec
+2) In BLE, during Connection, same values of Scan Interval and Scan Window is not recommended.
+3) In BT Classic, recommended value of Sniff Interval during Power Save is limited to 100ms(<= 100).
+4) In WLAN + BT Classic coex, for BT file transfer to work fine, recommended value of WLAN protocol DTIM is more 
+    than 3 and Beacon Interval is more than 200ms.
+
+Bluetooth Limitations/Features NOT Supported:
+---------------------------------------------
+1) BT Sniff mode does not work if BT multiple slaves feature is enabled
+2) When BT multiple slaves feature is enabled, Master to slave role switch will not happen
+3) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+4) In WLAN + BLE coex, if BLE Connection is established with small Connection Interval(< 15ms),
+    simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported. 
+5) Observed glitches in BT audio in coex mode when WiFi is connected
+6) Simultaneous slave & Master roles (Scatternet) is not supported.
+7) In BLE, if device is acting as Master/Slave, Scan Window (in set_scan_params and create_connection command)
+   shall be less than the exisitng Connection Interval.
+8) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+9) In BLE , if BLE Connection is established with small Connection Interval(< 15ms),
+   simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported.
+WLAN:
+=====
+1) Fixed stability and functional issues raised by QA and customers.
+2) Fixed nLink driver regression issues.
+
+BT:
+===
+--None--
+
+Common Limitations/Features NOT Supported:
+------------------------------------------
+ 1)M15DB-T & M15DB modules are not supported
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) AMSDU TX is not supported
+2) Fragmentation is not supported.
+3) AMSDU's within AMPDU is not supported.
+4) WLAN Performance is less in dense environments.
+5) WLAN 2G 40Mhz has Performance issues.
+6) Digital Loopback is not supported
+7) PUF is not supported
+8) AP mode more than 32 clients not supported,AP + BT + BLE has only 4 clients support
+9) CW Mode is not supported
+10) RF Loopback modes M2,M3 are not supported
+11) USB ULP is not supported
+12) WMM-Admission Control is not supported
+13) LP Powersave using GPIO handshake is not supported
+
+Bluetooth Recommendations:
+---------------------------------------------
+1) In BLE, recommended range of Connection Interval in
+   i)  Power Save - 100ms to 1.28sec.
+   ii) BT Classic + BLE Dual Mode is >= 200ms.
+   iii)WLAN + BLE coex - 30ms to 4sec
+2) In BLE, during Connection, same values of Scan Interval and Scan Window is not recommended.
+3) In BT Classic, recommended value of Sniff Interval during Power Save is limited to 100ms(<= 100).
+4) In WLAN + BT Classic coex, for BT file transfer to work fine, recommended value of WLAN protocol DTIM is more 
+    than 3 and Beacon Interval is more than 200ms.
+
+Bluetooth Limitations/Features NOT Supported:
+---------------------------------------------
+1) BT Sniff mode does not work if BT multiple slaves feature is enabled
+2) When BT multiple slaves feature is enabled, Master to slave role switch will not happen
+3) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+4) In WLAN + BLE coex, if BLE Connection is established with small Connection Interval(< 15ms),
+    simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported. 
+5) Observed glitches in BT audio in coex mode when WiFi is connected
+6) Simultaneous slave & Master roles (Scatternet) is not supported.
+7) In BLE, if device is acting as Master/Slave, Scan Window (in set_scan_params and create_connection command)
+   shall be less than the exisitng Connection Interval.
+8) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+9) In BLE , if BLE Connection is established with small Connection Interval(< 15ms),
+   simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported.
+
+  Release           : RS911X.NB0.NL.GNU.LNX.2.0.RC4
+  Date              : 03-Jan-2020
+_______________________________________________________________
+ 	Copyright (C) Redpine Signals, Inc 2020
+_______________________________________________________________
+
+Release Status:
+===================
+
+	Test         (X)
+	Alpha        ( )
+	Beta         ( )
+	Production   ( )
+________________________________________________________________
+
+
+Supported Hardware:
+=======================
+RS911X-NB0-XXX Modules With SDIO / USB Interface
+
+Supported Linux Kernel Versions:
+================================
+Kernel versions from v3.18 to v5.3
+
+Interfaces Supported:
+=====================
+USB
+SDIO
+
+==============================================================
+New Features:
+=============
+Common:
+=======
+1) Added support for ULP with message / GPIO handshake.
+2) Added support for USB auto suspend.
+
+Wi-Fi:
+=====
+1) Added support fro 11W(MFP)
+2) Added support for Sniffer mode
+3) Added support for WPA3
+
+BT:
+==
+--None--
+
+Changes / Issues fixed:
+======================
+
+1) Fixed stability and functional issues raised by QA and customers.
+2) Fixed nLink driver regression issues.
+
+BT:
+===
+--None--
+
+Common Limitations/Features NOT Supported:
+------------------------------------------
+ 1)M15DB-T & M15DB modules are not supported
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) AMSDU TX is not supported
+2) Fragmentation is not supported.
+3) AMSDU's within AMPDU is not supported.
+4) WLAN Performance is less in dense environments.
+5) WLAN 2G 40Mhz has Performance issues.
+6) Digital Loopback is not supported
+7) PUF is not supported
+8) AP mode more than 32 clients not supported,AP + BT + BLE has only 4 clients support
+9) CW Mode is not supported
+10) RF Loopback modes M2,M3 are not supported
+11) USB ULP is not supported
+12) WMM-Admission Control is not supported
+13) LP Powersave using GPIO handshake is not supported
+
+Bluetooth Recommendations:
+---------------------------------------------
+1) In BLE, recommended range of Connection Interval in
+   i)  Power Save - 100ms to 1.28sec.
+   ii) BT Classic + BLE Dual Mode is >= 200ms.
+   iii)WLAN + BLE coex - 30ms to 4sec
+2) In BLE, during Connection, same values of Scan Interval and Scan Window is not recommended.
+3) In BT Classic, recommended value of Sniff Interval during Power Save is limited to 100ms(<= 100).
+4) In WLAN + BT Classic coex, for BT file transfer to work fine, recommended value of WLAN protocol DTIM is more 
+    than 3 and Beacon Interval is more than 200ms.
+
+Bluetooth Limitations/Features NOT Supported:
+---------------------------------------------
+1) BT Sniff mode does not work if BT multiple slaves feature is enabled
+2) When BT multiple slaves feature is enabled, Master to slave role switch will not happen
+3) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+4) In WLAN + BLE coex, if BLE Connection is established with small Connection Interval(< 15ms),
+    simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported. 
+5) Observed glitches in BT audio in coex mode when WiFi is connected
+6) Simultaneous slave & Master roles (Scatternet) is not supported.
+7) In BLE, if device is acting as Master/Slave, Scan Window (in set_scan_params and create_connection command)
+   shall be less than the exisitng Connection Interval.
+8) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+9) In BLE , if BLE Connection is established with small Connection Interval(< 15ms),
+   simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported.
+WLAN:
+=====
+1) Fixed stability and functional issues raised by QA and customers.
+2) Fixed nLink driver regression issues.
+
+BT:
+===
+--None--
+
+Common Limitations/Features NOT Supported:
+------------------------------------------
+ 1)M15DB-T & M15DB modules are not supported
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) AMSDU TX is not supported
+2) Fragmentation is not supported.
+3) AMSDU's within AMPDU is not supported.
+4) WLAN Performance is less in dense environments.
+5) WLAN 2G 40Mhz has Performance issues.
+6) Digital Loopback is not supported
+7) PUF is not supported
+8) AP mode more than 32 clients not supported,AP + BT + BLE has only 4 clients support
+9) CW Mode is not supported
+10) RF Loopback modes M2,M3 are not supported
+11) USB ULP is not supported
+12) WMM-Admission Control is not supported
+13) LP Powersave using GPIO handshake is not supported
+
+Bluetooth Recommendations:
+---------------------------------------------
+1) In BLE, recommended range of Connection Interval in
+   i)  Power Save - 100ms to 1.28sec.
+   ii) BT Classic + BLE Dual Mode is >= 200ms.
+   iii)WLAN + BLE coex - 30ms to 4sec
+2) In BLE, during Connection, same values of Scan Interval and Scan Window is not recommended.
+3) In BT Classic, recommended value of Sniff Interval during Power Save is limited to 100ms(<= 100).
+4) In WLAN + BT Classic coex, for BT file transfer to work fine, recommended value of WLAN protocol DTIM is more 
+    than 3 and Beacon Interval is more than 200ms.
+
+Bluetooth Limitations/Features NOT Supported:
+---------------------------------------------
+1) BT Sniff mode does not work if BT multiple slaves feature is enabled
+2) When BT multiple slaves feature is enabled, Master to slave role switch will not happen
+3) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+4) In WLAN + BLE coex, if BLE Connection is established with small Connection Interval(< 15ms),
+    simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported. 
+5) Observed glitches in BT audio in coex mode when WiFi is connected
+6) Simultaneous slave & Master roles (Scatternet) is not supported.
+7) In BLE, if device is acting as Master/Slave, Scan Window (in set_scan_params and create_connection command)
+   shall be less than the exisitng Connection Interval.
+8) In BLE, if Advertising/Scanning are in progress, and the device moves to Slave/Master role,
+   Advertising/Scanning will be stopped. Provide respective commands to start Advertising/Scanning 
+   while being in Slave/Master role.
+9) In BLE , if BLE Connection is established with small Connection Interval(< 15ms),
+   simultaneous roles (i.e. Master/Slave + Advertising/Scanning) are not supported.
+ 
+ 
+  Release           : RS911X.NBZ.NL.GNU.LNX.2.0.RC2_TR3
+  Date              : 22-Nov-2019
+_______________________________________________________________
+ 	Copyright (C) Redpine Signals, Inc 2019
+_______________________________________________________________
+
+Release Status:
+===================
+
+	Test         (X)
+	Alpha        ( )
+	Beta         ( )
+	Production   ( )
+
+Driver SVN tag version	: Release_GNU_2.0.RC2_TR3
+Firmware SVN versions	: Release_GNU_1.2.99
+________________________________________________________________
+
+
+Supported Hardware:
+=======================
+RS911X-NBZ-XXX Modules With SDIO / USB Interface
+
+Supported Platform
+=======================
+X86, IMX, Caracalla
+
+Supported Software:
+=======================
+Kernel versions from 3.18 to 5.0
+________________________________________________________________
+
+
+=========================================================
+Release 2.0.RC2_TR3
+=========================================================
+
+--------------------------
+Change Log
+--------------------------
+
+--------------------------
+WLAN
+--------------------------
+
+WLAN New Features:
+-----------------------------------------
+1) Added support for STA->AP and AP->STA switching in coex mode
+
+WLAN Bug Fixes:
+-------------------
+1) Fix for RSI-STA connection issue while switching from RSI-AP to RSI-STA.
+2) Fixed WLAN authentication failure issue with 1.2.0 firmware.
+3) Limited BT-TX power in ETSI domain to 10dbm.
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) For GTK rekey, wakeup trigger send to host.
+2) Maintain ~20 Sec delay and insert 2/3/4/5 module to use Multi mode feature.
+3) BGSCAN with RS-9116 module, By default it will take connected band channels only.
+
+WLAN Known Bugs:
+------------------
+1) For UAPSD power save, packet retry is happening.
+
+---------------------------
+BT
+---------------------------
+
+BT New Features:
+-----------------------------------------
+
+BT Bug fixes
+-----------------------------------------
+1) Ble connection issues.
+
+BT Limitations/Features NOT Supported:
+----------------------------------------
+1. To connect multiple BT slaves, connection should be initiated from rsi module.
+2. In coex mode, BT file transfer fails at times with certain mobiles.
+
+---------------------------
+ZIGB
+---------------------------
+
+ZIGB New Features:
+-----------------------------------------
+None
+
+ZIGB Bug fixes
+-----------------------------------------
+
+ZIGB Limitations/Features NOT Supported:
+----------------------------------------
+1) Multimode support is not available for zigbee.
+
+
+  Release           : RS911X.NBZ.NL.GNU.LNX.2.0.RC1
+  Date              : 16-Nov-2018
+_______________________________________________________________
+ 	Copyright (C) Redpine Signals, Inc 2018
+_______________________________________________________________
+
+Release Status:
+===================
+
+	Test         (X)
+	Alpha        ( )
+	Beta         ( )
+	Production   ( )
+
+Driver SVN tag version	: Release_GNU_2.0.RC1
+Firmware SVN versions	: Release_GNU_1.1.0f(RS9116)
+			  Release_GNU_1.6.1(RS9113)
+________________________________________________________________
+
+
+Supported Hardware:
+=======================
+RS911X-NBZ-XXX Modules With SDIO / USB Interface
+
+Supported Platform
+=======================
+X86, IMX, Caracalla
+
+Supported Software:
+=======================
+Kernel versions from 3.18 to 4.19.0.rc7
+________________________________________________________________
+
+
+=========================================================
+Release 2.0.RC1
+=========================================================
+
+--------------------------
+Change Log V2.0
+--------------------------
+Note:  Since RS9113 releases are in 1.X series, Changing common releases
+to 2.x release.
+
+--------------------------
+WLAN
+--------------------------
+
+WLAN New Features:
+-----------------------------------------
+None
+
+WLAN Bug Fixes:
+-------------------
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) For GTK rekey, wakeup trigger send to host.
+2) Maintain ~20 Sec delay and insert 2/3/4/5 module to use Multi mode feature.
+
+WLAN Known Bugs:
+------------------
+1) For UAPSD power save, packet retry will happend.
+2) For QoS, Driver will only send BE in all the cases.
+
+---------------------------
+BT
+---------------------------
+
+BT New Features:
+-----------------------------------------
+
+BT Bug fixes
+-----------------------------------------
+
+BT Limitations/Features NOT Supported:
+----------------------------------------
+1. To connect multiple BT slaves, connection should be initiated from rsi module.
+2. In coex mode, BT file transfer fails at times with certain mobiles.
+
+---------------------------
+ZIGB
+---------------------------
+
+ZIGB New Features:
+-----------------------------------------
+None
+
+ZIGB Bug fixes
+-----------------------------------------
+
+ZIGB Limitations/Features NOT Supported:
+----------------------------------------
+
+
+  Release           : RS911X.NBZ.NL.GNU.LNX.1.0.RC1
+  Date              : 29-Oct-2018
+_______________________________________________________________
+ 	Copyright (C) Redpine Signals, Inc 2018
+_______________________________________________________________
+
+Release Status:
+===================
+
+	Test         (X)
+	Alpha        ( )
+	Beta         ( )
+	Production   ( )
+
+Driver SVN tag version	: Release_GNU_1.0.RC1
+Firmware SVN versions	: Release_GNU_1.0.4(RS9116)
+			  Release_GNU_1.6.1(RS9113)
+________________________________________________________________
+
+
+Supported Hardware:
+=======================
+RS911X-NBZ-XXX Modules With SDIO / USB Interface
+
+Supported Platform
+=======================
+X86, IMX, Caracalla
+
+Supported Software:
+=======================
+Kernel versions from 3.18 to 4.19.0.rc7
+________________________________________________________________
+
+
+=========================================================
+Release 1.0.RC1
+=========================================================
+
+--------------------------
+Change Log V1.0
+--------------------------
+1) Initial driver release for Common Driver(RS911X chipsets)
+
+--------------------------
+WLAN
+--------------------------
+
+WLAN New Features:
+-----------------------------------------
+None
+
+WLAN Bug Fixes:
+-------------------
+
+WLAN Limitations/Features NOT Supported:
+----------------------------------------
+1) For GTK rekey, wakeup trigger send to host.
+2) Maintain ~20 Sec delay and insert 2/3/4/5 module to use Multi mode feature.
+
+
+---------------------------
+BT
+---------------------------
+
+BT New Features:
+-----------------------------------------
+
+BT Bug fixes
+-----------------------------------------
+
+BT Limitations/Features NOT Supported:
+----------------------------------------
+1. To connect multiple BT slaves, connection should be initiated from rsi module.
+2. In coex mode, BT file transfer fails at times with certain mobiles.
+
+---------------------------
+ZIGB
+---------------------------
+
+ZIGB New Features:
+-----------------------------------------
+None
+
+ZIGB Bug fixes
+-----------------------------------------
+
+ZIGB Limitations/Features NOT Supported:
+----------------------------------------
+
+
