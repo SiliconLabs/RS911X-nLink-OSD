@@ -216,6 +216,10 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
 		}
 	}
 
+	if (common->fixed_rate_en) {
+		frame_desc[3] = cpu_to_le16(RATE_INFO_ENABLE);
+		frame_desc[4] = cpu_to_le16(common->fixed_rate);
+	}
 	if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
 		rsi_dbg(INFO_ZONE, "*** Tx EAPOL ***\n");
 		
@@ -490,6 +494,8 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
 	struct ieee80211_bss_conf *bss = NULL;
 	__le16 *desc = NULL;
 	struct xtended_desc *xtend_desc = NULL;
+	struct ieee80211_vif *vif = NULL;
+	int wait_for_tx_cnfm = 0;
 
 	if (!skb)
 		return 0;
@@ -520,10 +526,43 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
 		goto out;
 	bss = &info->control.vif->bss_conf;
 	wh = (struct ieee80211_hdr *)&skb->data[header_size];
+	vif = rsi_get_vif(adapter, wh->addr2);
+	if (!vif) {
+		rsi_dbg(ERR_ZONE,
+			"%s: Failed to get vif\n", __func__);
+		status = -ENOSPC;
+		goto out;
+	}
 
 	desc = (__le16 *)skb->data;
 	xtend_desc = (struct xtended_desc *)&skb->data[FRAME_DESC_SZ];
 
+	if ((ieee80211_is_qos_nullfunc(wh->frame_control)) &&
+			(info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS )) {
+		struct rsi_sta *sta = NULL;
+		int offset;
+		if (vif->type == NL80211_IFTYPE_AP) {
+			sta = rsi_find_sta(common, wh->addr1);
+			offset = sta->sta_id;
+		} else if (vif->type == NL80211_IFTYPE_STATION) {
+			sta = &common->stations[RSI_MAX_ASSOC_STAS];
+			offset = RSI_MAX_ASSOC_STAS;
+		}
+		if(sta) {
+			rsi_dbg(MGMT_DEBUG_ZONE,
+					"Adding NULL DATA CONFIRM  in frame desc\n");
+			desc[1] |= cpu_to_le16(RSI_DESC_REQUIRE_CFM_TO_HOST);
+			desc[7] |= cpu_to_le16(sta->sta_id << 8);
+			xtend_desc->confirm_frame_type = NULLDATA_CONFIRM;
+			common->stations[offset].sta_skb = skb;
+			wait_for_tx_cnfm = 1;
+		} else {
+			rsi_dbg(ERR_ZONE,
+					"NULLDATA CNFM is not added ,STA is NULL  \n");
+			rsi_indicate_tx_status(common->priv, skb, NULLDATA_FAIL);
+			return status;
+		}
+	}
 	/* Indicate to firmware to give cfm */
 	if (ieee80211_is_probe_req(wh->frame_control)) {
 		if (!bss->assoc) {
@@ -574,7 +613,9 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
 	}
 
 out:
-	rsi_indicate_tx_status(common->priv, skb, status);
+	if (!wait_for_tx_cnfm) {
+		rsi_indicate_tx_status(common->priv, skb, status);
+	}
 	return status;
 }
 
@@ -733,6 +774,10 @@ static void bl_cmd_timeout(struct timer_list *t)
  */
 static int bl_start_cmd_timer(struct rsi_hw *adapter, u32 timeout)
 {
+	if(timer_pending(&adapter->bl_cmd_timer)) {
+		rsi_dbg(ERR_ZONE, "%s : Timer Pending. This Case Should not occur\n",__func__);
+		del_timer(&adapter->bl_cmd_timer);
+	}
 #if LINUX_VERSION_CODE < KERNEL_VERSION (4, 15, 0)
 	init_timer(&adapter->bl_cmd_timer);
 	adapter->bl_cmd_timer.data = (unsigned long)adapter;

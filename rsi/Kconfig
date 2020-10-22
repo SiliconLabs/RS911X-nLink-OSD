@@ -58,30 +58,6 @@ config RSI_COEX_MODE
 	  This option enables the Wi-Fi BT coex support in rsi drivers.
 	  Select Y, if you have to use this feature.
 
-config RSI_WOW
-	bool "Redpine Signals WoWLAN support"
-	depends on RSI_91X
-	default n
-	---help---
-	  This option enables the WoWLAN support.
-	  Say Y if you want to use this feature.
-
-config RSI_P2P
-	bool "Redpine Signals Wi-Fi Direct support"
-	depends on RSI_91X
-	default n
-	---help---
-	  This option enables the Wi-Fi Direct support in rsi drivers.
-	  Select Y, if you have to use this feature.
-
-config HW_SCAN_OFFLOAD 
-	bool "Redpine Signals Hardware scan offload feature"
-	depends on RSI_91X
-	default n
-	---help---
-	  This option enables the hardware scan offload option in rsi drivers.
-	  Select Y, if you have to use this feature.
-
 config CARACALLA_BOARD 
 	bool "Redpine device support on Caracalla board"
 	depends on RSI_91X
@@ -89,21 +65,4 @@ config CARACALLA_BOARD
 	---help---
 	  This option is used to support Caracalla board with RSI driver.
 	  Select Y, if you have to use this support.
-
-config RSI_ZIGB 
-	bool "Redpine device support on Zigbee"
-	depends on RSI_91X && RSI_COEX_MODE
-	default n
-	---help---
-	  This option is used to support Zigbee with RSI driver.
-	  Select Y, if you have to use this support.
-
-config RS9116_FLASH_MODE
-	bool "Redpine Signals RS9116 chip Flash mode FW load support"
-	depends on RSI_91X && RSI_COEX_MODE
-	default n
-	---help---
-	  This option enables Flash mode FW load support for RS9116.
-	  Say Y if you want to use this feature.
-
 endif # WLAN_VENDOR_RSI

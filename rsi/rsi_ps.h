@@ -58,7 +58,7 @@ struct rsi_ps_info {
 	u8 tx_hysterisis;
 	u8 rx_hysterisis;
 	u16 monitor_interval;
-	u32 listen_interval;
+	u32 listen_interval_duration;
 	u16 num_bcns_per_lis_int;
 	u32 dtim_interval_duration;
 	u16 num_dtims_per_sleep;

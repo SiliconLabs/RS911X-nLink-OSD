@@ -296,22 +296,33 @@ static int rsi_bgscan_int_read(struct seq_file *file, void *data)
 	}
 	params = &common->bgscan_info;
 
-	seq_printf(file, "%d %d %d %d %d %d %d %d\n",
+	seq_printf(file, "%d %d %d %d %d %d %d ",
 		   common->bgscan_en,
 		   params->bgscan_threshold,
 		   params->roam_threshold,
 		   params->bgscan_periodicity,
 		   params->active_scan_duration,
 		   params->passive_scan_duration,
-		   params->two_probe,
-		   params->num_bg_channels);
+		   params->two_probe);
 
-	for (cnt = 0; cnt < params->num_bg_channels; cnt++) {
-		if (params->channels2scan[cnt] & (BIT(15)))
-			seq_printf(file, "%d[DFS] ",
-				   (params->channels2scan[cnt] & 0x7FFF));
-		else
-			seq_printf(file, "%d ", params->channels2scan[cnt]);
+	if (common->debugfs_bgscan) {
+		seq_printf(file, "%d\n", params->debugfs_bg_channels);
+		for (cnt = 0; cnt < params->debugfs_bg_channels; cnt++) {
+			if (params->debugfs_channels[cnt] & (DFS_CHANNEL))
+				seq_printf(file, "%d[DFS] ",
+						(params->debugfs_channels[cnt] & 0x7FFF));
+			else
+				seq_printf(file, "%d ", params->debugfs_channels[cnt]);
+		}
+	} else {
+		seq_printf(file, "%d\n", params->num_bg_channels);
+		for (cnt = 0; cnt < params->num_bg_channels; cnt++) {
+			if (params->channels2scan[cnt] & (DFS_CHANNEL))
+				seq_printf(file, "%d[DFS] ",
+						(params->channels2scan[cnt] & 0x7FFF));
+			else
+				seq_printf(file, "%d ", params->channels2scan[cnt]);
+		}
 	}
 	seq_printf(file, "\n");
 
@@ -321,6 +332,117 @@ static int rsi_bgscan_int_read(struct seq_file *file, void *data)
 static int rsi_bgscan_read(struct inode *inode, struct file *file)
 {
 	return single_open(file, rsi_bgscan_int_read, inode->i_private);
+}
+
+/**
+ * rsi_validate_debugfs_bgscan_channels() - This function is used to validate
+ *				bgscan channels provided through debugfs.
+ * @common : Pointer to the rsi_common structure.
+ * Return : O on success and -1 on Failure.
+ */
+int rsi_validate_debugfs_bgscan_channels(struct rsi_common *common)
+{
+	struct bgscan_config_params *bgscan_info = &common->bgscan_info;
+	u16 ii, jj, ch_num, num_valid_channels = 0;
+	u16 valid_debugfs_channels[MAX_BG_CHAN_FROM_USER];
+
+	for (ii = 0 ; ii < bgscan_info->debugfs_bg_channels ; ii++) {
+		ch_num = bgscan_info->debugfs_channels[ii];
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 2, 0))
+		for (jj = 0 ; jj < common->user_channels_count; jj++) {
+			if (ch_num == common->user_channels_list[jj]) {
+#else
+		for (jj = 0 ; jj < bgscan_info->num_user_channels; jj++) {
+			if (ch_num == bgscan_info->user_channels[jj]) {
+#endif
+				valid_debugfs_channels[num_valid_channels] = ch_num;
+				num_valid_channels++;
+				break;
+			}
+		}
+	}
+	if (num_valid_channels > 0) {
+		for (ii = 0 ; ii < num_valid_channels ; ii++) {
+			bgscan_info->debugfs_channels[ii] = valid_debugfs_channels[ii];
+			if ((common->bgscan_info.debugfs_channels[ii] >= 52) &&
+					(common->bgscan_info.debugfs_channels[ii] <= 140))
+				common->bgscan_info.debugfs_channels[ii] |= DFS_CHANNEL;
+		}
+		bgscan_info->debugfs_bg_channels = num_valid_channels;
+		return 0;
+	 } else
+		return -1;
+}
+
+/**
+ * rsi_validate_bgscan_params() - This function is used to validate bgscan
+ *				  params provided by user.
+ * @common : Pointer to the rsi_common structure.
+ * @bgscan_vals : Pointer to user buffer.
+ * @user_params_cnt : user_params_cnt
+ * Return : O on success and -1 on Failure.
+ */
+static int rsi_validate_bgscan_params(struct rsi_common *common,
+					 int *bgscan_vals,
+					 int user_params_cnt)
+{
+	struct bgscan_config_params *bgscan_info = &common->bgscan_info;
+	int cnt = 0;
+
+	bgscan_info->bgscan_threshold = bgscan_vals[0];
+	bgscan_info->roam_threshold = bgscan_vals[1];
+	bgscan_info->bgscan_periodicity = bgscan_vals[2];
+	if ((bgscan_info->bgscan_threshold < 0) ||
+			(bgscan_info->roam_threshold < 0) ||
+			(bgscan_info->bgscan_periodicity < 0)) {
+		rsi_dbg(ERR_ZONE, "Bg scan arguments can't be negative vals\n");
+		return -EINVAL;
+	}
+	bgscan_info->active_scan_duration = bgscan_vals[3];
+	if (!bgscan_info->active_scan_duration ||
+			(bgscan_info->active_scan_duration > 255) ||
+			(bgscan_info->active_scan_duration < 0)) {
+		rsi_dbg(ERR_ZONE, "Active scan duration should be greater"
+				" than 0 and less than 256\n");
+		return -EINVAL;
+	}
+
+	bgscan_info->passive_scan_duration = bgscan_vals[4];
+	if (!bgscan_info->passive_scan_duration ||
+			(bgscan_info->passive_scan_duration > 255) ||
+			(bgscan_info->passive_scan_duration < 0)) {
+		rsi_dbg(ERR_ZONE, "Passive scan duration should be greater"
+				" than 0 and less than 256\n");
+		return -EINVAL;
+	}
+	bgscan_info->two_probe = bgscan_vals[5];
+	if (!((bgscan_info->two_probe &&
+		(bgscan_info->two_probe == 1)) ||
+			(bgscan_info->two_probe == 0))) {
+		rsi_dbg(ERR_ZONE, "value for two_probe is either 0 or 1\n");
+		return -EINVAL;
+	}
+
+	if ((user_params_cnt - 7) != bgscan_vals[6]) {
+		rsi_dbg(ERR_ZONE, "channels count is more than"
+				  " Provided Channels\n");
+		return -EINVAL;
+	}
+	bgscan_info->debugfs_bg_channels = bgscan_vals[6];
+	if (bgscan_info->debugfs_bg_channels > MAX_BG_CHAN_FROM_USER) {
+		rsi_dbg(ERR_ZONE, "User provided channels  are more"
+				  " than MAX_BG_CHAN_FROM_USER\n");
+		return -EINVAL;
+	}
+	memset(bgscan_info->debugfs_channels, 0,
+	       (MAX_BG_CHAN_FROM_USER * 2));
+	for (cnt = 0; cnt < bgscan_info->debugfs_bg_channels; cnt++)
+		bgscan_info->debugfs_channels[cnt] = bgscan_vals[7 + cnt];
+	if (rsi_validate_debugfs_bgscan_channels(common)) {
+		rsi_dbg(ERR_ZONE, "User provided invalid channels\n");
+		return -EINVAL;
+	}
+	return 0;
 }
 
 /**
@@ -342,11 +464,11 @@ static ssize_t rsi_bgscan_write(struct file *file,
 	struct rsi_common *common = file->f_inode->i_private;
 	struct rsi_hw *adapter = NULL;
 	struct ieee80211_bss_conf *bss = NULL;
-	char bgscan_buf[200];
 	int bgscan_vals[64] = { 0 };
-	int total_bytes, cnt = 0;
 	int bytes_read = 0, t_bytes;
 	int ret, bgscan_enable = 0;
+	int total_bytes, cnt = 0, user_params_cnt = 0;
+	char *bgscan_buf = kmalloc(count + 1, GFP_KERNEL);
 
 	if (!common) {
 		rsi_dbg(ERR_ZONE, "No Interface\n");
@@ -358,15 +480,19 @@ static ssize_t rsi_bgscan_write(struct file *file,
 	}
 	adapter = common->priv;
 	bss = &adapter->vifs[adapter->sc_nvifs - 1]->bss_conf;
+	if (bss && !bss->assoc) {
+		rsi_dbg(ERR_ZONE, "Send Bgscan params after connection\n");
+		return -ENODEV;
+	}
 
 	total_bytes = simple_write_to_buffer(bgscan_buf,
-					     sizeof(bgscan_buf) - 1,
+					     count,
 					     ppos, user_buff, count);
 	if (total_bytes < 1)
 		return -EINVAL;
 
 	/* make sure that buf is null terminated */
-	bgscan_buf[sizeof(bgscan_buf) - 1] = '\0';
+	bgscan_buf[count] = '\0';
 
 	ret = sscanf(bgscan_buf, "%d%n",
 		     (int *)&bgscan_enable, &t_bytes);
@@ -379,17 +505,23 @@ static ssize_t rsi_bgscan_write(struct file *file,
 			rsi_dbg(ERR_ZONE, "bgscan already disabled\n");
 			return total_bytes;
 		}
-
-		mutex_lock(&common->mutex);
-		if (bss->assoc && !rsi_send_bgscan_params(common, 0)) {
-			rsi_dbg(ERR_ZONE, "*** bgscan disabled ***\n");
-			common->bgscan_en = 0;
-		}
-		mutex_unlock(&common->mutex);
-
-		return total_bytes;
-	} else
 		common->debugfs_bgscan = true;
+		mutex_lock(&common->bgscan_lock);
+		if (common->bgscan_in_prog) {
+			common->debugfs_bgscan_en = true;
+			common->debugfs_stop_bgscan = true;
+			mutex_unlock(&common->bgscan_lock);
+			return total_bytes;
+		} else {
+			rsi_send_bgscan_params(common, 0);
+			common->debugfs_bgscan_en = false;
+			common->debugfs_bgscan = false;
+			common->bgscan_en = false;
+			init_bgscan_params(common);
+		}
+		mutex_unlock(&common->bgscan_lock);
+		return total_bytes;
+	}
 
 	bytes_read += t_bytes;
 	while (1) {
@@ -399,26 +531,18 @@ static ssize_t rsi_bgscan_write(struct file *file,
 		if (ret <= 0)
 			break;
 		bytes_read += t_bytes;
+		user_params_cnt++;
+
 		
 		if ((bgscan_vals[6] > 0) && (cnt > (6 + bgscan_vals[6])))
 			break;
 	}
-	common->bgscan_info.bgscan_threshold = bgscan_vals[0];
-	common->bgscan_info.roam_threshold = bgscan_vals[1];
-	common->bgscan_info.bgscan_periodicity = bgscan_vals[2];
-	common->bgscan_info.active_scan_duration = bgscan_vals[3];
-	common->bgscan_info.passive_scan_duration = bgscan_vals[4];
-	common->bgscan_info.two_probe = bgscan_vals[5];
-	common->bgscan_info.num_user_channels = bgscan_vals[6];
-	memset(&common->bgscan_info.user_channels, 0,
-	       (MAX_BGSCAN_CHANNELS * 2));
-	common->bgscan_info.num_user_channels = 
-		((bgscan_vals[6] > MAX_BGSCAN_CHANNELS) ?
-		 MAX_BGSCAN_CHANNELS : bgscan_vals[6]); 
-	
-	for (cnt = 0; cnt < common->bgscan_info.num_user_channels; cnt++)
-		common->bgscan_info.user_channels[cnt] = bgscan_vals[7 + cnt];
-
+	kfree(bgscan_buf);
+	if (rsi_validate_bgscan_params(common, bgscan_vals,
+							user_params_cnt)) {
+		rsi_dbg(ERR_ZONE, "User provided invalid bgscan parameters\n");
+		return -1;
+	}
 	rsi_dbg(INFO_ZONE,
 		"bgscan_count = %d, roam_count = %d, periodicity = %d\n",
 		common->bgscan_info.bgscan_threshold,
@@ -430,18 +554,21 @@ static ssize_t rsi_bgscan_write(struct file *file,
 		common->bgscan_info.passive_scan_duration,
 		common->bgscan_info.two_probe);
 	rsi_dbg(INFO_ZONE, "Number of scan channels = %d\n",
-		common->bgscan_info.num_user_channels);
+		common->bgscan_info.debugfs_bg_channels);
 	rsi_hex_dump(INFO_ZONE, "bgscan channels",
-		     (u8 *)common->bgscan_info.user_channels,
-		     common->bgscan_info.num_user_channels * 2);
+		     (u8 *)common->bgscan_info.debugfs_channels,
+		     common->bgscan_info.debugfs_bg_channels * 2);
 
-	rsi_validate_bgscan_channels(common->priv, &common->bgscan_info);
-	if (!common->bgscan_info.num_bg_channels) {
-		rsi_dbg(ERR_ZONE, "No valid bgscan channels\n");
-		return -1;
-	}
-	if (common->bgscan_en)
+	common->debugfs_bgscan = true;
+	mutex_lock(&common->bgscan_lock);
+	if (common->bgscan_in_prog) {
+		common->debugfs_bgscan_en = true;
+		mutex_unlock(&common->bgscan_lock);
+		return total_bytes;
+	} else
 		rsi_send_bgscan_params(common, 1);
+	mutex_unlock(&common->bgscan_lock);
+
 	rsi_dbg(INFO_ZONE, "bgscan params update complete\n");
 
 	return total_bytes;
@@ -759,7 +886,7 @@ static int rsi_read_ps_params_from_buf(struct seq_file *file, void *data)
 			ps_info->tx_hysterisis,
 			ps_info->rx_hysterisis,
 			ps_info->monitor_interval,
-			ps_info->listen_interval,
+			ps_info->listen_interval_duration,
 			ps_info->num_bcns_per_lis_int,
 			ps_info->dtim_interval_duration,
 			ps_info->num_dtims_per_sleep,
@@ -833,8 +960,8 @@ int rsi_validate_ps_params(struct rsi_common *common, int *ps_params_vals)
 			"of 50 milliseconds Which is recommended ***\n");
 		ps_info->monitor_interval = 50;
 	}
-	ps_info->listen_interval =  ps_params_vals[6];
-	if (ps_info->listen_interval > 65535) {
+	ps_info->listen_interval_duration =  ps_params_vals[6];
+	if (ps_info->listen_interval_duration > 65535) {
 		rsi_dbg(ERR_ZONE,
 			"Please enter a valid value for listen_interval\n");
 		rsi_dbg(ERR_ZONE, "Supported Range is 0 to 65535\n");
@@ -875,7 +1002,7 @@ int rsi_validate_ps_params(struct rsi_common *common, int *ps_params_vals)
 		!ps_info->deep_sleep_wakeup_period) {
 			ps_info->deep_sleep_wakeup_period = 10;
 	}
-	if ((!ps_info->listen_interval) && (!ps_info->num_bcns_per_lis_int)
+	if ((!ps_info->listen_interval_duration) && (!ps_info->num_bcns_per_lis_int)
 		&& (!ps_info->dtim_interval_duration) && (!ps_info->num_dtims_per_sleep)) {
 		rsi_dbg(ERR_ZONE, "Listen_interval and num_bcns_per_lis_int"
 			"and dtim_interval_duration and num_dtims_per_sleep for"
@@ -945,12 +1072,46 @@ static ssize_t rsi_write_ps_params(struct file *file,
 	return total_bytes;
 }
 
+static ssize_t rsi_set_bgscan_ssid(struct file *file,
+				const char __user *user_buff,
+				size_t count,
+				loff_t *ppos)
+{
+	struct rsi_common *common = file->f_inode->i_private;
+
+	common->bgscan_ssid_len = count - 1;
+	if (common->bgscan_ssid_len > 32) {
+		rsi_dbg(ERR_ZONE,
+			"The ssid should be <= to 32 characters\n");
+		return -EINVAL;
+	}
+	memcpy(common->bgscan_ssid, user_buff, common->bgscan_ssid_len);
+	return count;
+}
+
+static int rsi_read_bgscan_ssid(struct seq_file *file, void *data)
+{
+	struct rsi_common *common = file->private;
+
+	if (!common) {
+		rsi_dbg(ERR_ZONE, "No Interface\n");
+		return -ENODEV;
+	}
+	seq_printf(file, "%s\n", common->bgscan_ssid);
+	return 0;
+}
+static int rsi_get_bgscan_ssid(struct inode *inode, struct file *file)
+{
+	return single_open(file, rsi_read_bgscan_ssid, inode->i_private);
+}
 static const struct rsi_dbg_files dev_debugfs_files[] = {
 	{"version", 0644, FOPS(rsi_version_open),},
 	{"stats", 0644, FOPS(rsi_stats_open),},
 	{"debug_zone", 0666, FOPS_RW(rsi_debug_read, rsi_debug_zone_write),},
 	{"bgscan", 0666, FOPS_RW(rsi_bgscan_read, rsi_bgscan_write),},
 	{"ps_params", 0666, FOPS_RW(rsi_read_ps_params, rsi_write_ps_params),},
+	{"bgscan_ssid", 0666, FOPS_RW(rsi_get_bgscan_ssid,
+				      rsi_set_bgscan_ssid),},
 #if defined(CONFIG_RSI_11K) && defined(RSI_DEBUG_RRM)
 	{"rrm_chan_load_req", 0666, FOPS_RW(rsi_read_chload_meas_req,
 					    rsi_write_chload_meas_req),},

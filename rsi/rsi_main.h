@@ -42,7 +42,7 @@ struct rsi_hw;
 
 #include "rsi_ps.h"
 
-#define DRV_VER				"RS911X.NBZ.NL.GNU.LNX.2.0.RC6"
+#define DRV_VER				"RS9116.NB0.NL.GNU.LNX.OSD.2.0.0.0024"
 
 #define ERR_ZONE                        BIT(0) /* Error Msgs		*/
 #define INFO_ZONE                       BIT(1) /* Generic Debug Msgs	*/
@@ -73,7 +73,9 @@ struct rsi_hw;
 #define ACS_DISABLE		0
 #define TIMER_ENABLE		BIT(8)
 #define ACS_TIMEOUT_TYPE	15
-#define ACS_TIMEOUT_TIME	150
+#define ACTIVE_SCAN_DURATION	65
+#define PASSIVE_SCAN_DURATION	(HZ / 9)
+#define ACS_TIMEOUT_TIME	(PASSIVE_SCAN_DURATION - 10)
 
 /* Antenna Diversity */
 #define MAX_SCAN_PER_ANTENNA		2
@@ -130,13 +132,13 @@ void rsi_hex_dump(u32 zone, char *msg_str, const u8 *msg, u32 len);
 #define IEEE80211_NONQOS_TID            16
 
 #if defined(CONFIG_RSI_11K) && defined(RSI_DEBUG_RRM)
-#define MAX_DEBUGFS_ENTRIES             9
+#define MAX_DEBUGFS_ENTRIES             10
 #else
-#define MAX_DEBUGFS_ENTRIES             6
+#define MAX_DEBUGFS_ENTRIES             7
 #endif
 #define MAX_BGSCAN_CHANNELS		38
-#define PASSIVE_SCAN_DURATION		110
-#define ACTIVE_SCAN_DURATION		65
+#define MAX_BG_CHAN_FROM_USER		24
+#define DFS_CHANNEL			BIT(15)
 
 
 #define TID_TO_WME_AC(_tid) (      \
@@ -265,10 +267,12 @@ struct bgscan_config_params {
 	u16 bgscan_periodicity;
 	u8 num_user_channels;
 	u8 num_bg_channels;
+	u8 debugfs_bg_channels;
 	u8 two_probe;
 	u16 active_scan_duration;
 	u16 passive_scan_duration;
 	u16 user_channels[MAX_BGSCAN_CHANNELS];
+	u16 debugfs_channels[MAX_BG_CHAN_FROM_USER];
 	u16 channels2scan[MAX_BGSCAN_CHANNELS];
 };
 
@@ -360,6 +364,7 @@ struct rsi_sta {
 	u16 seq_no[IEEE80211_NUM_ACS];
 	u16 seq_start[IEEE80211_NUM_ACS];
 	bool start_tx_aggr[IEEE80211_NUM_TIDS];
+	struct sk_buff *sta_skb;
 };
 
 struct rsi_hw;
@@ -368,7 +373,7 @@ struct rsi_common {
 	struct rsi_hw *priv;
 	struct vif_priv vif_info[RSI_MAX_VIFS];
 
-	char driver_ver[32];
+	char driver_ver[48];
 	struct version_info lmac_ver;
 
 	struct rsi_thread tx_thread;
@@ -383,6 +388,7 @@ struct rsi_common {
 	/* Mutex used between tx/rx threads */
 	struct mutex tx_lock;
 	struct mutex rx_lock;
+	struct mutex bgscan_lock;
 	u8 endpoint;
 
 	/* Channel/band related */
@@ -442,6 +448,9 @@ struct rsi_common {
 	u16 ulp_token;
 	bool sleep_entry_received;
 	bool ulp_sleep_ack_sent;
+	bool sleep_ind_gpio_sel;
+	u8 ulp_gpio_read;
+	u8 ulp_gpio_write;
 	u8 uapsd_bitmap;
 	u8 rf_power_val;
 	u8 device_gpio_type;
@@ -457,15 +466,21 @@ struct rsi_common {
 	int tx_power;
 	u8 ant_in_use;
 	bool suspend_in_prog;
+	bool rx_in_prog;
 	bool hibernate_resume;
 	bool reinit_hw;
 	struct completion wlan_init_completion;
 	bool debugfs_bgscan;
+	bool debugfs_bgscan_en;
+	bool bgscan_in_prog;
+	bool debugfs_stop_bgscan;
+	bool send_initial_bgscan_chan;
 #ifdef CONFIG_RSI_WOW
 	u8 wow_flags;
 #endif
 
-#if defined (CONFIG_RSI_BT_ALONE) || defined(CONFIG_RSI_COEX_MODE)
+#if defined(CONFIG_RSI_BT_ALONE) || defined(CONFIG_RSI_COEX_MODE) \
+	|| defined(CONFIG_RSI_BT_ANDROID)
 	void *hci_adapter;
 #endif
 
@@ -513,7 +528,6 @@ struct rsi_common {
 	bool scan_in_prog;
 	struct workqueue_struct *scan_workqueue;
 	struct work_struct scan_work;
-	struct work_struct scan_complete_work;
 	struct rsi_event chan_set_event;
 	struct rsi_event probe_cfm_event;
 	struct rsi_event chan_change_event;
@@ -579,6 +593,18 @@ struct rsi_common {
 	bool enable_40mhz_in_2g;
 	bool enabled_uapsd;
 	u8 max_sp_len;
+	u8 bgscan_ssid[32];
+	u8 bgscan_ssid_len;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 2, 0))
+	u8 hw_scan_count;
+	u8 user_channels_count;
+	u16 user_channels_list[MAX_BGSCAN_CHANNELS];
+#endif
+	u8 use_protection;
+	bool peer_notify_state;
+	u8 sta_bssid[ETH_ALEN];
+	u8 fixed_rate_en;
+	u16 fixed_rate;
 };
 
 enum host_intf {
@@ -663,6 +689,7 @@ struct rsi_hw {
 	u8 auto_chan_sel;
 	u8 idx;
 	struct survey_info rsi_survey[MAX_NUM_CHANS];
+	u8 n_channels;
 };
 
 struct acs_stats_s {
@@ -711,7 +738,7 @@ struct rsi_mod_ops {
 	int (*recv_pkt)(void *priv, u8 *msg);
 };
 
-void gpio_deinit(void);
+void gpio_deinit(struct rsi_common *common);
 #if defined(CONFIG_RSI_COEX_MODE) && defined(CONFIG_RSI_ZIGB)
 struct rsi_mod_ops *rsi_get_zb_ops(void);
 #endif

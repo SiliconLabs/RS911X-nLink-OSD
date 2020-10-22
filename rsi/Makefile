@@ -71,12 +71,6 @@ KERNELDIR=/lib/modules/$(KERNELRELEASE)/build
 # Uncomment below line for 9116 flash based firmware loading
 #CONFIG_RS9116_FLASH_MODE=y
 
-# Uncomment below line for GPIO handshake based sleep
-#USE_GPIO_HANDSHAKE=y
-
-# Uncomment below line for SABRESD ULP GPIO
-#SABRESD_GPIO=y
-
 #Uncomment below line for purism requirement \
 also need to enabled CONFIG_RS9116_FLASH_MODE flag
 #CONFIG_RS9116_PURISM=y
@@ -99,7 +93,7 @@ RSI_91X_OBJS := rsi_91x_hal.o \
   	        rsi_91x_core.o \
 		rsi_91x_ps.o \
 	        rsi_91x_debugfs.o
-ifeq ($(USE_GPIO_HANDSHAKE), y)
+ifeq ($(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H), y)
 RSI_91X_OBJS += rsi_91x_gpio.o
 endif
 
@@ -159,10 +153,6 @@ ifeq ($(CONFIG_RSI_NO_SDIO_MULTIBLOCK), y)
 EXTRA_CFLAGS += -DCONFIG_RSI_NO_SDIO_MULTIBLOCK
 endif
 
-ifeq ($(SABRESD_GPIO), y)
-ccflags-y += -DSABRESD_GPIO
-endif
-
 ifeq ($(CONFIG_RS9116_PURISM), y)
 EXTRA_CFLAGS += -DCONFIG_RS9116_PURISM
 endif
@@ -183,7 +173,7 @@ rsi_91x-objs := $(RSI_91X_OBJS)
 
 all:
 	@echo -e "\033[32mCompiling RSI drivers...\033[0m"
-	make -C$(KERNELDIR)/ SUBDIRS=$(PWD) modules
+	make -C$(KERNELDIR)/ M=$(PWD) modules
 
 clean:
-	make -C$(KERNELDIR)/ SUBDIRS=$(PWD) clean
+	make -C$(KERNELDIR)/ M=$(PWD) clean

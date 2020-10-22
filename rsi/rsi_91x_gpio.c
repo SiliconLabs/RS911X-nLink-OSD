@@ -40,10 +40,10 @@
  * @return:
  * @params:
  */
-void gpio_deinit(void)
+void gpio_deinit(struct rsi_common *common)
 {
-	gpio_free(RSI_GPIO_READ);
-	gpio_free(RSI_GPIO_WRITE);
+	gpio_free(common->ulp_gpio_read);
+	gpio_free(common->ulp_gpio_write);
 }
 EXPORT_SYMBOL_GPL(gpio_deinit);
 
@@ -52,35 +52,34 @@ EXPORT_SYMBOL_GPL(gpio_deinit);
  * @return:
  * @params:
  */
-void gpio_init(void)
+void gpio_init(struct rsi_common *common)
 {
 	int rc = 0;
 	char *read_gpio = "device_status";
 	char *write_gpio = "host_intention";
 
-#if defined(SABRESD_GPIO)
-	gpio_free(RSI_GPIO_READ);
-	gpio_free(RSI_GPIO_WRITE);
-#endif
-	rc = gpio_request(RSI_GPIO_WRITE, write_gpio);
+	/* gpio_free() is dangerous to use.FIXME*/
+	gpio_free(common->ulp_gpio_read);
+	gpio_free(common->ulp_gpio_write);
+	rc = gpio_request(common->ulp_gpio_write, write_gpio);
 	if (rc) {
 		rsi_dbg(ERR_ZONE, "%s: %s setup failed with err: %d\n",
 			__func__, write_gpio, rc);
 		return;
 	}
-	rc = gpio_request(RSI_GPIO_READ, read_gpio);
+	rc = gpio_request(common->ulp_gpio_read, read_gpio);
 	if (rc) {
 		rsi_dbg(ERR_ZONE, "%s: %s setup failed with err: %d\n",
 			__func__, read_gpio, rc);
 		return;
 	}
-	rc = gpio_direction_output(RSI_GPIO_WRITE, 0);
+	rc = gpio_direction_output(common->ulp_gpio_write, 0);
 	if (rc) {
 		rsi_dbg(ERR_ZONE, "%s: failed to set %s direction, err: %d\n",
 			__func__, write_gpio, rc);
 		return;
 	}
-	rc = gpio_direction_input(RSI_GPIO_READ);
+	rc = gpio_direction_input(common->ulp_gpio_read);
 	if (rc) {
 		rsi_dbg(ERR_ZONE, "%s: failed to set %s direction, err: %d\n",
 			__func__, read_gpio, rc);
@@ -96,9 +95,9 @@ EXPORT_SYMBOL_GPL(gpio_init);
  *
  * Return: None.
  */
-void set_host_status(int value)
+void set_host_status(int value, struct rsi_common *common)
 {
-	__gpio_set_value(RSI_GPIO_WRITE, value);
+	__gpio_set_value(common->ulp_gpio_write, value);
 }
 EXPORT_SYMBOL_GPL(set_host_status);
 
@@ -108,9 +107,9 @@ EXPORT_SYMBOL_GPL(set_host_status);
  *
  * Return: True if gpio status high, false if gpio status low.
  */
-int get_device_status(void)
+int get_device_status(struct rsi_common *common)
 {
-	return __gpio_get_value(RSI_GPIO_READ);
+	return __gpio_get_value(common->ulp_gpio_read);
 }
 EXPORT_SYMBOL_GPL(get_device_status);
 

@@ -150,7 +150,7 @@ struct rsi_91x_sdiodev {
 	u8 *temp_rcv_buf;
 };
 
-void gpio_init(void);
+void gpio_init(struct rsi_common *common);
 void rsi_interrupt_handler(struct rsi_hw *adapter);
 int rsi_init_sdio_slave_regs(struct rsi_hw *adapter);
 int rsi_sdio_device_init(struct rsi_common *common);

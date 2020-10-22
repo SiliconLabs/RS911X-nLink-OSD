@@ -214,6 +214,25 @@ static struct reg_map rsi_caracalla_reg_db[MAX_REG_COUNTRIES] = {
 };
 #endif
 
+
+/**
+ * rsi_start_ap() - This function is used to configure the AP params 
+ *                  check the validity.
+ * @hw: Pointer to the hw structure.
+ * @vif: Pointer to virtual interface structure.
+ *
+ * Return: Status of validity of params.
+ */
+int rsi_start_ap(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+{
+	if((vif->bss_conf.beacon_int < MIN_BEACON_INTVL) ||
+		(vif->bss_conf.beacon_int > MAX_BEACON_INTVL)){
+		rsi_dbg(ERR_ZONE, "%s: Please configure beacon interval within the supported range from 56ms to 1000ms\n", __func__);
+		return -EINVAL;
+	}
+	return 0;
+}
+
 static int rsi_validate_mac_addr(struct rsi_common *common, u8 *addr_t)
 {
 	u8 addr[ETH_ALEN] = {0};
@@ -231,25 +250,12 @@ static int rsi_mac80211_get_chan_survey(struct ieee80211_hw *hw,
 					int idx, struct survey_info *survey)
 {
 	int ret = 0;
-	struct ieee80211_supported_band *sband;
 	struct rsi_hw *adapter = hw->priv;
 
 	if (!idx)
 		rsi_dbg(INFO_ZONE, "Copying ACS survey results\n");
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
-	sband = hw->wiphy->bands[NL80211_BAND_2GHZ];
-#else
-	sband = hw->wiphy->bands[IEEE80211_BAND_2GHZ];
-#endif
-	if (!sband) {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
-		sband = hw->wiphy->bands[NL80211_BAND_5GHZ];
-#else
-		sband = hw->wiphy->bands[IEEE80211_BAND_5GHZ];
-#endif
-	}
-	if (!sband || idx >= sband->n_channels)
+	if (idx >= adapter->idx)
 		return  -ENOENT;
 
 	memcpy(survey, &adapter->rsi_survey[idx], sizeof(struct survey_info));
@@ -434,6 +440,7 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 	struct rsi_common *common = adapter->priv;
 	struct ieee80211_bss_conf *bss = &adapter->vifs[0]->bss_conf;
 	int ii = 0, n;
+	common->scan_request = scan_req;
 
 	rsi_dbg(INFO_ZONE, "***** Hardware scan start *****\n");
 
@@ -446,6 +453,14 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 	if (!bss->assoc) {
 		if (common->antenna_diversity)
 			rsi_trigger_antenna_change(common);
+		if (vif->type == NL80211_IFTYPE_AP) {
+			if (adapter->auto_chan_sel == ACS_DISABLE) {
+				adapter->auto_chan_sel = ACS_ENABLE;
+				adapter->n_channels = scan_req->n_channels;
+				rsi_dbg(MGMT_DEBUG_ZONE, "Auto Channel selection scan start\n");
+			}
+			adapter->idx = 0;
+		}
 #if LINUX_VERSION_CODE > KERNEL_VERSION(4, 20, 17)
 		/* If STA is not connected, return with special value 1,
 		 * in order to start sw_scan in mac80211
@@ -461,9 +476,7 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 	if(rsi_validate_mac_addr(common, vif->addr))
 		return -ENODEV;
 	cancel_work_sync(&common->scan_work);
-	cancel_work_sync(&common->scan_complete_work);
 	mutex_lock(&common->mutex);
-	common->scan_request = scan_req;
 	common->scan_vif = vif;
 	common->scan_in_prog = false;
 	common->bgscan_en = false;
@@ -473,7 +486,6 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 	} else {
 		/* Upon connection, make scan count to 0 */
 		common->rsi_scan_count = 0;
-		cancel_work_sync(&common->scan_complete_work);
 
 		/* Wait for EAPOL4 completion before starting bg scan */
 		if ((bss->assoc_capability & BIT(4))) {
@@ -482,20 +494,35 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 				return -EBUSY;
 			}
 		}
-		if (common->bgscan_en) {
-			queue_work(common->scan_workqueue, &common->scan_complete_work);
-			mutex_unlock(&common->mutex);
-			return 0;
-		}
-		if (!common->debugfs_bgscan) {
-			common->bgscan_info.num_user_channels = scan_req->n_channels;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 2, 0))
+		if (common->num_supp_bands > 1) {
+			if (common->hw_scan_count < 2) {
+				for (ii = 0; ii < scan_req->n_channels; ii++) {
+					common->user_channels_list[ii + common->user_channels_count] =
+						scan_req->channels[ii]->hw_value;
+				}
+				common->user_channels_count += scan_req->n_channels;
+				common->hw_scan_count++;
+
+			}
+		} else {
+			common->user_channels_count = scan_req->n_channels;
 			for (ii = 0; ii < scan_req->n_channels; ii++) {
-				common->bgscan_info.user_channels[ii] =
+				common->user_channels_list[ii] =
 					scan_req->channels[ii]->hw_value;
 			}
 		}
+#endif
+		common->bgscan_info.num_user_channels = scan_req->n_channels;
+		for (ii = 0; ii < scan_req->n_channels; ii++) {
+			common->bgscan_info.user_channels[ii] =
+				scan_req->channels[ii]->hw_value;
+		}
 		common->hwscan_en = true;
 		if (!rsi_send_bgscan_params(common, 1)) {
+			mutex_lock(&common->bgscan_lock);
+			common->bgscan_in_prog = true;
+			mutex_unlock(&common->bgscan_lock);
 			if (scan_req->n_ssids > MAX_HW_SCAN_SSID) {
 				n = 0;
 				cfg_ssid = &scan_req->ssids[n];
@@ -503,7 +530,6 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 					"hw scan ssid's\n", cfg_ssid->ssid,
 					scan_req->n_ssids);
 			}
-			rsi_send_probe_request(common, scan_req, n, 0, 1);
 			if (!rsi_send_bgscan_probe_req(common)) {
 				rsi_dbg(INFO_ZONE,
 					"Background scan started\n");
@@ -537,13 +563,12 @@ void rsi_mac80211_hw_scan_cancel(struct ieee80211_hw *hw,
 		common->scan_request = NULL;
 	}
 #endif
-	if (common->bgscan_en) {
+	if (common->bgscan_in_prog) {
 		if (bss->assoc) {
 			rsi_wait_event(&common->cancel_hw_scan_event,
 				       EVENT_WAIT_FOREVER);
 			rsi_reset_event(&common->cancel_hw_scan_event);
 		} else {
-			common->bgscan_en = 0;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0))
 			info.aborted = false;
 			ieee80211_scan_completed(adapter->hw, &info);
@@ -728,7 +753,6 @@ static void rsi_mac80211_stop(struct ieee80211_hw *hw)
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 20, 17)
 	cancel_work_sync(&common->scan_work);
 #endif
-	cancel_work_sync(&common->scan_complete_work);
 	mutex_lock(&common->mutex);
 	
 	common->iface_down = true;
@@ -1060,11 +1084,6 @@ static int rsi_channel_change(struct ieee80211_hw *hw)
 			return -EINVAL;
 		}
 		common->ap_channel = curchan;
-		if (vif->type == NL80211_IFTYPE_AP &&
-		    adapter->auto_chan_sel) {
-			rsi_dbg(INFO_ZONE, "ACS Final Channel selection");
-			adapter->auto_chan_sel = ACS_DISABLE;
-		}
 		return 0;
 	}
 	common->mac80211_cur_channel = channel;
@@ -1175,12 +1194,6 @@ static int rsi_mac80211_config(struct ieee80211_hw *hw,
 	if (changed & IEEE80211_CONF_CHANGE_LISTEN_INTERVAL) {
 		rsi_dbg(INFO_ZONE,
 			"listen_int = %d\n", conf->listen_interval);
-		if (bss->dtim_period < conf->listen_interval)
-			adapter->ps_info.num_bcns_per_lis_int =
-				bss->dtim_period;
-		else
-			adapter->ps_info.num_bcns_per_lis_int =
-				conf->listen_interval;
 	}
 
 	/* tx power */
@@ -1301,6 +1314,7 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 	struct ieee80211_bss_conf *bss = &vif->bss_conf;
 	struct ieee80211_conf *conf = &hw->conf;
 	u16 rx_filter_word = 0;
+	u8 addr[ETH_ALEN] = {0};
 
 	rsi_dbg(INFO_ZONE, "%s: BSS status changed; changed=%08x\n",
 		__func__, changed);
@@ -1339,11 +1353,8 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 				      bss->bssid, bss->qos, bss->aid, NULL, 0,
 				      bss->assoc_capability);
 
-		/* Update DTIM period and listen interval */
-		adapter->ps_info.dtim_interval_duration = bss->dtim_period;
-		adapter->ps_info.listen_interval = conf->listen_interval;
 		rsi_dbg(INFO_ZONE, "Beacon_Int = %d Lis_Int = %d Dtim = %d\n",
-			bss->beacon_int, adapter->ps_info.num_bcns_per_lis_int,
+			bss->beacon_int, conf->listen_interval,
 			bss->dtim_period);
 
 		/* If UAPSD is updated send ps params */
@@ -1354,6 +1365,18 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 			}
 		} else
 			common->uapsd_bitmap = 0;
+	}
+
+	if ((vif->type == NL80211_IFTYPE_STATION) &&
+		    changed & BSS_CHANGED_BSSID) {
+		if(common->peer_notify_state == true && !bss_conf->assoc &&
+			!(changed & BSS_CHANGED_ASSOC) && !(memcmp(bss_conf->bssid, addr, ETH_ALEN))) {
+			rsi_send_sta_notify_frame(common, STA_OPMODE,
+						  STA_DISCONNECTED,
+						  common->sta_bssid, bss_conf->qos,
+						  bss_conf->aid, 0);
+
+		}
 	}
 
 	if ((vif->type == NL80211_IFTYPE_STATION) &&
@@ -1382,8 +1405,6 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 						vif->addr, common->last_vap_id,
 						VAP_UPDATE);
 		}
-		adapter->ps_info.listen_interval =
-			bss->beacon_int * adapter->ps_info.num_bcns_per_lis_int;
 	}
 
 	if ((changed & BSS_CHANGED_BEACON_ENABLED) &&
@@ -1396,6 +1417,19 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 			rsi_dbg(INFO_ZONE, "===> BEACON DISABLED <===\n");
 			common->beacon_enabled = 0;
 		}
+	}
+	if ((vif->type == NL80211_IFTYPE_AP) && common->beacon_enabled &&
+			adapter->auto_chan_sel) {
+		rsi_dbg(MGMT_DEBUG_ZONE, "ACS Final Channel selection\n");
+		adapter->auto_chan_sel = ACS_DISABLE;
+	}
+	if (changed & BSS_CHANGED_ERP_CTS_PROT) {
+		rsi_dbg(ERR_ZONE, "%s: Change of ERP INFO: %d\n",
+				__func__, bss_conf->use_cts_prot);
+		common->use_protection = bss_conf->use_cts_prot;
+		rsi_dbg(ERR_ZONE,
+				"%s: Sending vap updates....\n", __func__);
+		rsi_send_vap_dynamic_update(common);
 	}
 
 	mutex_unlock(&common->mutex);
@@ -1854,9 +1888,37 @@ static int rsi_mac80211_set_rts_threshold(struct ieee80211_hw *hw,
 
 	mutex_lock(&common->mutex);
 	common->rts_threshold = value;
+	rsi_send_vap_dynamic_update(common);
 	mutex_unlock(&common->mutex);
 
 	return 0;
+}
+
+/**
+ * rsi_get_rate_code() - This function parse the bitmap to find the rate code.
+ * @bitmap: bitmap containing rate indices.
+ * @band: band info of the current state
+ * @mcs: 1 -> bitmap is containing mcs rate indices.
+ *       0 -> bitmap is containing legacy rate indices.
+ * Return: returns rate code.
+ */
+static u16 rsi_get_rate_code(u16 bitmap, enum nl80211_band band, bool mcs) 
+{
+	int i = 0;
+	if(bitmap & (bitmap - 1)) /*Making sure only 1 bit is set in bitmap*/
+		return 0xFF;
+
+	while(!(bitmap & BIT(i)) && (i < 16)) {
+		i++;
+	}
+
+	if(mcs) 
+		return (u16)rsi_mcsrates[i];
+	else {
+		if(band == NL80211_BAND_5GHZ) 
+			i += 4;
+		return (u16)(rsi_rates[i].hw_value);
+	}
 }
 
 /**
@@ -1874,19 +1936,54 @@ static int rsi_mac80211_set_rate_mask(struct ieee80211_hw *hw,
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
 	enum nl80211_band band = hw->conf.chandef.chan->band;
+	u16 legacy = 0 ,rate = 0, reject_command;
+	u8 mcs = 0;
+	int status = 0;
 
 	mutex_lock(&common->mutex);
 	common->fixedrate_mask[band] = 0;
 
+#if 0
 	if (mask->control[band].legacy == 0xfff) {
 		common->fixedrate_mask[band] =
 			(mask->control[band].ht_mcs[0] << 12);
 	} else {
 		common->fixedrate_mask[band] = mask->control[band].legacy;
 	}
+#endif
+
+	mcs = mask->control[band].ht_mcs[0];
+	legacy = mask->control[band].legacy;
+
+	reject_command = (mcs == MCS_RATE_MAP) && 
+		(legacy == (band ? _5G_LEGACY_RATE_MAP : _2G_LEGACY_RATE_MAP));
+
+	if(reject_command) {
+		mutex_unlock(&common->mutex);
+		return -EINVAL;
+	}
+
+	if((mcs == 0) || (legacy == 0))  /* Disabling the fixed rate */
+		common->fixed_rate_en = 0;
+	else {  /* Selecting the fixed rate */
+		if (mcs != MCS_RATE_MAP)
+			rate = rsi_get_rate_code((u16)mcs, band, true);
+		else
+			rate = rsi_get_rate_code(legacy, band, false);
+
+		if(rate == 0xFF) {
+			mutex_unlock(&common->mutex);
+			return -EINVAL;
+		}
+
+		common->fixed_rate_en = 1;
+		common->fixed_rate = rate;
+	}
+	status = rsi_send_vap_dynamic_update(common);
+
 	mutex_unlock(&common->mutex);
 
-	return 0;
+	return status;
 }
 
 /**
@@ -2092,14 +2189,10 @@ static int rsi_fill_rx_status(struct ieee80211_hw *hw,
 
 	rxs->signal = -(rssi);
 
-	if (common->priv->device_model == RSI_DEV_9113) {
-		if (channel >=1 && channel <= 14)
-			rxs->band = NL80211_BAND_2GHZ;
-		else if (channel >= 32 && channel <= 173)
-			rxs->band = NL80211_BAND_5GHZ;
-	} else if (common->priv->device_model == RSI_DEV_9116) {
-		rxs->band = common->band;
-	}
+	if (channel >= 1 && channel <= 14)
+		rxs->band = NL80211_BAND_2GHZ;
+	else if (channel >= 32 && channel <= 173)
+		rxs->band = NL80211_BAND_5GHZ;
 
 	freq = ieee80211_channel_to_frequency(channel, rxs->band);
 
@@ -2118,16 +2211,16 @@ static int rsi_fill_rx_status(struct ieee80211_hw *hw,
 					dev_kfree_skb(skb);
 					return -EINVAL;
 				}
+				if (rsi_validate_pn(adapter, hdr) < 0) {
+					rsi_dbg(INFO_ZONE,
+							"Invalid RX PN; Dropping\n");
+					dev_kfree_skb(skb);
+					return -EINVAL;
+				}
 				memmove(skb->data + IEEE80211_CCMP_HDR_LEN,
 					skb->data, hdrlen);
 				skb_pull(skb, IEEE80211_CCMP_HDR_LEN);
 				rxs->flag |= RX_FLAG_MMIC_STRIPPED;
-			}
-			if (rsi_validate_pn(adapter, hdr) < 0) {
-				rsi_dbg(INFO_ZONE,
-					"Invalid RX PN; Dropping\n");
-				dev_kfree_skb(skb);
-				return -EINVAL;
 			}
 		}
 		rxs->flag |= RX_FLAG_DECRYPTED;
@@ -2372,6 +2465,11 @@ static int rsi_mac80211_sta_remove(struct ieee80211_hw *hw,
 		common->vif_info[0].seq_start = 0;
 		common->secinfo.ptk_cipher = 0;
 		common->secinfo.gtk_cipher = 0;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 2, 0))
+		common->hw_scan_count = 0;
+		common->user_channels_count = 0;
+#endif
+		common->send_initial_bgscan_chan = false;
 		if (common->bgscan_en) {
 			if (!rsi_send_bgscan_params(common, 0))
 				common->bgscan_en = 0;
@@ -2688,7 +2786,6 @@ static int rsi_mac80211_suspend(struct ieee80211_hw *hw,
 	/* Cancel back ground scan in suspend */
 	if (common->bgscan_en) {
 		if (!rsi_send_bgscan_params(common, 0)) {
-			common->bgscan_en = 0;
 			rsi_dbg(INFO_ZONE,"Bg scan canceled");
 		}
 	}
@@ -2725,6 +2822,11 @@ static int rsi_mac80211_resume(struct ieee80211_hw *hw)
 			  ALLOW_MGMT_ASSOC_PEER |
 			  0);
 	rsi_send_rx_filter_frame(common, rx_filter_word);
+	if (common->bgscan_en) {
+		if (!rsi_send_bgscan_params(common, 1)) {
+			rsi_dbg(INFO_ZONE,"Bg scan enabled");
+		}
+	}
 	mutex_unlock(&common->mutex);
 #endif
 
@@ -2824,11 +2926,18 @@ void rsi_roc_timeout(struct timer_list *t)
 	mutex_unlock(&common->mutex);
 }
 
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 4, 0))
+static int rsi_mac80211_cancel_roc(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+{
+	struct rsi_hw *adapter = hw->priv;
+	struct rsi_common *common = adapter->priv;
+#else
 static int rsi_mac80211_cancel_roc(struct ieee80211_hw *hw)
 {
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
 	struct ieee80211_vif *vif = common->roc_vif;
+#endif
 	struct vif_priv *vif_info = (struct vif_priv *)vif->drv_priv;
 	enum opmode intf_mode; 
 	
@@ -2991,6 +3100,7 @@ static struct ieee80211_ops mac80211_ops = {
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 1, 0))
 	.event_callback = rsi_mac80211_event_callback,
 #endif
+	.start_ap = rsi_start_ap,
 };
 
 /**
@@ -3072,7 +3182,7 @@ int rsi_mac80211_attach(struct rsi_common *common)
 	else
 		hw->max_tx_aggregation_subframes = TX_AGGR_LIMIT_FOR_RS9113;
 
-	hw->max_rx_aggregation_subframes = 8;
+	hw->max_rx_aggregation_subframes = RX_AGGR_LIMIT_FOR_RS9116;
 
 	rsi_register_rates_channels(adapter, NL80211_BAND_2GHZ);
 	wiphy->bands[NL80211_BAND_2GHZ] =
@@ -3113,9 +3223,9 @@ int rsi_mac80211_attach(struct rsi_common *common)
 	/* AP Parameters */
 	wiphy->flags = WIPHY_FLAG_REPORTS_OBSS;
 	wiphy->flags |= WIPHY_FLAG_AP_UAPSD;
-	wiphy->features |= NL80211_FEATURE_INACTIVITY_TIMER;
+	/* wiphy->features |= NL80211_FEATURE_INACTIVITY_TIMER;
 
-	/*wiphy->regulatory_flags = (REGULATORY_STRICT_REG |
+	wiphy->regulatory_flags = (REGULATORY_STRICT_REG |
 				   REGULATORY_CUSTOM_REG);
 	wiphy_apply_custom_regulatory(wiphy,&rsi_regdom);*/
 	wiphy->reg_notifier = rsi_reg_notify;

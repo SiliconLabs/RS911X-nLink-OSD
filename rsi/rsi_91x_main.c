@@ -43,6 +43,28 @@
 #endif
 
 /*
+ * 0 - UULP_GPIO_3
+ * 1 - UULP_GPIO_0
+*/
+bool sleep_ind_gpio_sel = 1;
+module_param(sleep_ind_gpio_sel, bool, 0);
+MODULE_PARM_DESC(sleep_ind_gpio_sel, "\nSleep indication from device\n\
+0 - UULP_GPIO_3\n\
+1 - UULP_GPIO_0\n");
+
+/*
+ * To perform GPIO handshake we need read and write gpio pins
+ * these are platform independent, need to configure by user.
+ * default value is 0xff.
+ */
+u8 ulp_gpio_read = 0xff;
+u8 ulp_gpio_write = 0xff;
+module_param(ulp_gpio_read, byte, 0);
+module_param(ulp_gpio_write, byte, 0);
+MODULE_PARM_DESC(ulp_gpio_read, "\nProvide input gpio\n");
+MODULE_PARM_DESC(ulp_gpio_write, "\nProvide output gpio\n");
+
+/*
  * 0 - No handshake
  * 1 - GPIO handshake
  */
@@ -89,10 +111,16 @@ u16 anchor_point_gap = 1;
  * (1) Enable Host Interface on Demand Feature
  */
 bool host_intf_on_demand;
+
 /*
- * Default sleep clock derivation source is RC clock.
- */
-bool crystal_as_sleep_clk;
+ *  Sleep clock selection
+ * 0 - Use RC clock as sleep clock
+ * 1 - Use 32KHz clock from external XTAL OSCILLATOR
+ * 2 - Use 32KHz bypass clock on UULP_GPIO_3
+ * 3 - Use 32KHz bypass clock on UULP_GPIO_4
+*/
+u8 sleep_clk_source_sel;
+
 bool antenna_diversity = 0;
 u16 feature_bitmap_9116;
 u8 bt_rf_type = 0x01;
@@ -207,9 +235,12 @@ MODULE_PARM_DESC(host_intf_on_demand, "\nHost Interface on Demand Feature (0) \
 Disable Host Interface on Demand Feature (1) Enable Host Interface on Demand \
 Feature\n");
 
-module_param(crystal_as_sleep_clk, bool, 0);
-MODULE_PARM_DESC(crystal_as_sleep_clk, "\nSleep clock selection (0) RC clock \
-as sleep clock (1) 32KHz crystal as sleep clock\n");
+module_param(sleep_clk_source_sel, byte, 0);
+MODULE_PARM_DESC(sleep_clk_source_sel, "\nSleep clock selection\n\
+0 - Use RC clock as sleep clock\n\
+1 - Use 32KHz clock from external XTAL OSCILLATOR\n\
+2 - Use 32KHz bypass clock on UULP_GPIO_3\n\
+3 - Use 32KHz bypass clock on UULP_GPIO_4\n\n");
 
 module_param(antenna_diversity, bool, 0);
 MODULE_PARM_DESC(antenna_diversity, "\n Anetanna diversity selection(Only for \
@@ -242,11 +273,13 @@ BIT(10) - MGMT_DEBUG_ZONE\n");
 
 /* Default operating mode is Wi-Fi alone */
 int dev_oper_mode_count;
-#ifdef CONFIG_CARACALLA_BOARD
-#if defined (CONFIG_RSI_COEX_MODE) || defined(CONFIG_RSI_BT_ALONE)
-u16 dev_oper_mode = DEV_OPMODE_STA_BT_DUAL;
+#if (defined(CONFIG_CARACALLA_BOARD) && (defined(CONFIG_RSI_COEX_MODE) ||\
+		defined(CONFIG_RSI_BT_ALONE)))
+#ifdef CONFIG_RSI_MULTI_MODE
+u16 dev_oper_mode[5] = {DEV_OPMODE_STA_BT_DUAL,
+						0xff, 0xff, 0xff, 0xff};
 #else
-u16 dev_oper_mode = DEV_OPMODE_WIFI_ALONE;
+u16 dev_oper_mode = DEV_OPMODE_STA_BT_DUAL;
 #endif
 #else
 #ifdef CONFIG_RSI_MULTI_MODE
@@ -680,6 +713,7 @@ struct rsi_hw *rsi_91x_init(void)
 	mutex_init(&common->mutex);
 	mutex_init(&common->tx_lock);
 	mutex_init(&common->rx_lock);
+	mutex_init(&common->bgscan_lock);
 	sema_init(&common->tx_bus_lock, 1);
 	sema_init(&common->tx_access_lock, 1);
 	init_waitqueue_head(&common->techs[WLAN_ID].tx_access_event);
@@ -698,7 +732,6 @@ struct rsi_hw *rsi_91x_init(void)
 #endif
 	INIT_WORK(&common->scan_work, rsi_scan_start);
 #endif
-	INIT_WORK(&common->scan_complete_work, rsi_scan_complete);
 	rsi_init_event(&common->cancel_hw_scan_event);
 #ifdef CONFIG_RSI_MULTI_MODE
 	common->dev_oper_mode[0] = dev_oper_mode_count;
@@ -708,6 +741,30 @@ struct rsi_hw *rsi_91x_init(void)
 #endif
 	common->lp_ps_handshake_mode = lp_handshake_mode;
 	common->ulp_ps_handshake_mode = ulp_handshake_mode;
+#if !defined(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)
+	if (ulp_handshake_mode == GPIO_HAND_SHAKE) {
+		/* CONFIG_ARCH_HAVE_CUSTOM_GPIO_H flag is not set in kernel,
+		 * Hence GPIO handshake is not possible, proceed with packet
+		 * based handshake.
+		 */
+		rsi_dbg(ERR_ZONE, "no custom gpio configuration in kernel\n");
+		common->lp_ps_handshake_mode = NO_HAND_SHAKE;
+		common->ulp_ps_handshake_mode = PACKET_HAND_SHAKE;
+	}
+#endif
+	if (common->ulp_ps_handshake_mode == GPIO_HAND_SHAKE) {
+		if (ulp_gpio_read == 0xff || ulp_gpio_write == 0xff) {
+			rsi_dbg(ERR_ZONE,
+				"%s: provide valid platform GPIO pins\n",
+				__func__);
+			goto err;
+		}
+		rsi_dbg(INIT_ZONE, "%s: read-gpio = %d, write-gpio = %d\n",
+			__func__, ulp_gpio_read, ulp_gpio_write);
+		common->ulp_gpio_read = ulp_gpio_read;
+		common->ulp_gpio_write = ulp_gpio_write;
+		common->sleep_ind_gpio_sel = sleep_ind_gpio_sel;
+	}
 	common->peer_dist = peer_dist;
 	common->bt_feature_bitmap = bt_feature_bitmap;
 	common->uart_debug = uart_debug;
@@ -717,7 +774,7 @@ struct rsi_hw *rsi_91x_init(void)
 	common->three_wire_coex = three_wire_coex;
 	common->anchor_point_gap = anchor_point_gap;
 	common->host_intf_on_demand = host_intf_on_demand;
-	common->crystal_as_sleep_clk = crystal_as_sleep_clk;
+	common->crystal_as_sleep_clk = sleep_clk_source_sel;
 	common->feature_bitmap_9116 = feature_bitmap_9116;
 	common->host_intf_on_demand = host_intf_on_demand;
 	common->bt_rf_type = bt_rf_type;
@@ -817,9 +874,9 @@ void rsi_91x_deinit(struct rsi_hw *adapter)
 	DRV_INSTANCE_SET(adapter->drv_instance_index, 0);
 #endif
 	common->init_done = false;
-#if defined(USE_GPIO_HANDSHAKE)
+#if defined(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)
 	if (common->ulp_ps_handshake_mode == GPIO_HAND_SHAKE)
-		gpio_deinit();
+		gpio_deinit(common);
 #endif
 
 	kfree(common);

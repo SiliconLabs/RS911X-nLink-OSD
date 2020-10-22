@@ -109,6 +109,11 @@ enum rx_cmd_type {
 #define PROBEREQ_CONFIRM                2
 #define NULLDATA_CONFIRM		3
 
+#define NULLDATA_SUCCESS		0
+#define NULLDATA_FAIL			1
+#define MIN_BEACON_INTVL  		56
+#define MAX_BEACON_INTVL  		1000
+
 #define RSI_MAX_BGSCAN_CHANNEL_SUPPORTED	0x6F
 #define RSI_MAX_BGSCAN_PROBE_REQ_LEN		0x71
 #define HW_BMISS_THRESHOLD			20
@@ -187,6 +192,17 @@ enum rx_cmd_type {
 #define RSI_RATE_MCS6                   0x106
 #define RSI_RATE_MCS7                   0x107
 #define RSI_RATE_MCS7_SG                0x307
+
+#define _11G_RATE_MAP										(0xff << 4)
+#define _11B_RATE_MAP										(0xf)
+#define RSI_RATE_5_5_INX								(BIT(2))
+#define RSI_RATE_11_INX									(BIT(3))
+#define RSI_RATE_9_INX									(BIT(5))
+#define RSI_RATE_36_INX									(BIT(9))
+
+#define MCS_RATE_MAP			0xff
+#define _5G_LEGACY_RATE_MAP		0xff
+#define _2G_LEGACY_RATE_MAP		0xfff
 
 #define BW_20MHZ                        0
 #define BW_40MHZ                        1
@@ -273,6 +289,7 @@ enum rx_cmd_type {
 #define RSI_RX_POWER_MODE_MASK		0xF0
 #define TX_PWR_IN_SNIFFER_MODE		0
 #define TX_AGGR_LIMIT_FOR_RS9116	32
+#define RX_AGGR_LIMIT_FOR_RS9116	32
 #define TX_AGGR_LIMIT_FOR_RS9113	8
 
 enum opmode {
@@ -565,7 +582,7 @@ struct rsi_request_ps {
 	u8 ps_uapsd_acs;
 	u8 ps_uapsd_wakeup_period;
 	u8 reserved;
-	u32 ps_listen_interval;
+	u32 ps_listen_interval_duration;
 	u32 ps_dtim_interval_duration;
 	u16 ps_num_dtim_intervals;
 } __packed;
@@ -678,15 +695,15 @@ int rsi_handle_card_ready(struct rsi_common *common, u8 *msg);
 int rsi_send_bt_reg_params(struct rsi_common *common);
 void rsi_validate_bgscan_channels(struct rsi_hw *adapter,
 				  struct bgscan_config_params *params);
+int rsi_validate_debugfs_bgscan_channels(struct rsi_common *common);
 #ifdef CONFIG_RSI_WOW
 int rsi_send_wowlan_request(struct rsi_common *common, u16 flags,
 			    u16 sleep_status);
 #endif
 void rsi_scan_start(struct work_struct *data);
-void rsi_scan_complete(struct work_struct *data);
 int rsi_send_probe_request(struct rsi_common *common, 
 			   struct cfg80211_scan_request *scan_req, u8 n_ssid,
-			   u8 channel, u8 scan_type);
+			   u8 channel);
 #ifdef CONFIG_CARACALLA_BOARD
 void rsi_apply_carcalla_power_values(struct rsi_hw *adapter,
 				     struct ieee80211_vif *vif,

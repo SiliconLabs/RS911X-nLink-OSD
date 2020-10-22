@@ -145,6 +145,8 @@ static int rsi_process_pkt(struct rsi_common *common)
 #define WLAN_PKT 3
 #define ZIGB_PKT 1
 #define BT_PKT   2
+
+
 	num_blks = ((adapter->interrupt_status & 1) |
 			((adapter->interrupt_status >> 4) << 1));
 
@@ -334,9 +336,21 @@ void rsi_interrupt_handler(struct rsi_hw *adapter)
 	u8 fw_status = 0;
 
 	dev->rx_info.sdio_int_counter++;
-
+	mutex_lock(&common->rx_lock);
+	if(!common->suspend_in_prog)
+	{
+		common->rx_in_prog = true;
+		mutex_unlock(&common->rx_lock);
+	}
+	else {
+		rsi_dbg(ERR_ZONE,
+				"%s: Failed to read pkt as suspend in progress:\n",
+				__func__);
+		mutex_unlock(&common->rx_lock);
+		return;
+	}
+	
 	do {
-		mutex_lock(&common->rx_lock);
 		status = rsi_sdio_read_register(common->priv,
 						RSI_FN1_INT_REGISTER,
 						&isr_status);
@@ -345,6 +359,7 @@ void rsi_interrupt_handler(struct rsi_hw *adapter)
 				"%s: Failed to Read Intr Status Register\n",
 				__func__);
 			mutex_unlock(&common->rx_lock);
+			common->rx_in_prog = false;
 			return;
 		}
 
@@ -355,6 +370,7 @@ void rsi_interrupt_handler(struct rsi_hw *adapter)
 			rsi_set_event(&common->tx_thread.event);
 			dev->rx_info.sdio_intr_status_zero++;
 			mutex_unlock(&common->rx_lock);
+			common->rx_in_prog = false;
 			return;
 		}
 
@@ -417,6 +433,7 @@ void rsi_interrupt_handler(struct rsi_hw *adapter)
 						"%s: Failed to read pkt\n",
 						__func__);
 					mutex_unlock(&common->rx_lock);
+					common->rx_in_prog = false;
 					return;
 				}
 				break;
@@ -433,6 +450,7 @@ void rsi_interrupt_handler(struct rsi_hw *adapter)
 		} while (isr_status);
 		mutex_unlock(&common->rx_lock);
 	} while (1);
+	common->rx_in_prog = false;
 }
 
 /**

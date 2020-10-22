@@ -138,7 +138,7 @@ int rsi_config_wowlan(struct rsi_hw *adapter, struct cfg80211_wowlan *wowlan);
 void sleep_exit_recvd(struct rsi_common *common);
 int protocol_tx_access(struct rsi_common *common);
 int set_clr_tx_intention(struct rsi_common *common, u8 proto_id, u8 set);
-void set_host_status(int value);
-int get_device_status(void);
+void set_host_status(int value, struct rsi_common *common);
+int get_device_status(struct rsi_common *common);
 int rsi_send_ack_for_ulp_entry(struct rsi_common *common);
 #endif

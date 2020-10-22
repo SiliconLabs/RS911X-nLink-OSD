@@ -97,10 +97,10 @@ void rsi_default_ps_params(struct rsi_hw *adapter)
 	ps_info->tx_hysterisis = 0;
 	ps_info->rx_hysterisis = 0;
 	ps_info->monitor_interval = 0;
-	ps_info->listen_interval = 0;
+	ps_info->listen_interval_duration = 0;
 	ps_info->num_bcns_per_lis_int = 0;
-	ps_info->dtim_interval_duration = 1;
-	ps_info->num_dtims_per_sleep = 0;
+	ps_info->dtim_interval_duration = 0;
+	ps_info->num_dtims_per_sleep = 1;
 	ps_info->deep_sleep_wakeup_period = 100;
 	ps_info->uapsd_wakeup_period = RSI_UAPSD_WAKEUP_PERIOD;
 }
@@ -234,7 +234,7 @@ void sleep_exit_recvd(struct rsi_common *common)
 }
 EXPORT_SYMBOL(sleep_exit_recvd);
 
-#if defined(USE_GPIO_HANDSHAKE)
+#if defined(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)
 #define MAX_RETRY_LIMIT 30
 /*
  * process_tx_gpio_hand_shake() - This function performs GPIO handshake
@@ -263,25 +263,25 @@ int process_tx_gpio_handshake(struct rsi_common *common, u8 proto_id, u8 set)
 		 */
 		if (!protocol_tx_access(common)) {
 			common->common_hal_tx_access = false;
-			set_host_status(set);
+			set_host_status(set, common);
 		}
 		return 0;
 	}
 	/* Set intention */
-	set_host_status(set);
+	set_host_status(set, common);
 	tech->tx_intention = true;
 
 retry_to_wake_lmac:
-	if (!get_device_status()) {
+	if (!get_device_status(common)) {
 		while (1) {
 			msleep(1); // Device need some delay to wake up
-			if (get_device_status()) {
+			if (get_device_status(common)) {
 				/*
 				 * Check the GPIO status after some delay, just
 				 * to confirm its stablity.
 				 */
 				msleep(2);
-				if (get_device_status()) {
+				if (get_device_status(common)) {
 					common->common_hal_tx_access = true;
 					break;
 				}
@@ -295,7 +295,7 @@ retry_to_wake_lmac:
 		}
 	} else {
 		msleep(2);
-		if (get_device_status())
+		if (get_device_status(common))
 			common->common_hal_tx_access = true;
 		else
 			goto retry_to_wake_lmac;
@@ -312,7 +312,7 @@ int set_clr_tx_intention(struct rsi_common *common, u8 proto_id, u8 set)
 	adapter = common->priv;
 	tech = &common->techs[proto_id];
 	down(&common->tx_access_lock);
-#if defined(USE_GPIO_HANDSHAKE)
+#if defined(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)
 	if (common->lp_ps_handshake_mode == GPIO_HAND_SHAKE ||
 	    common->ulp_ps_handshake_mode == GPIO_HAND_SHAKE)
 	{

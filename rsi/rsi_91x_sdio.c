@@ -1326,9 +1326,9 @@ static int rsi_probe(struct sdio_func *pfunction,
 	rsi_dbg(INIT_ZONE, "%s: Setting ms word to 0x41050000\n", __func__);
 
 	adapter->priv->hibernate_resume = false;
-#if defined(USE_GPIO_HANDSHAKE)
+#if defined(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)
 	if (common->ulp_ps_handshake_mode == GPIO_HAND_SHAKE)
-		gpio_init();
+		gpio_init(common);
 #endif
 	return 0;
 
@@ -1522,7 +1522,6 @@ static int rsi_sdio_enable_interrupts(struct sdio_func *pfunction)
 
 	return ret;
 }
-
 static int rsi_suspend(struct device *dev)
 {
 	int ret = 0;
@@ -1531,7 +1530,7 @@ static int rsi_suspend(struct device *dev)
 	struct rsi_common *common = adapter->priv;
 	struct rsi_91x_sdiodev *sdev =
 		(struct rsi_91x_sdiodev *)adapter->rsi_dev;
-
+	u16 sleep_time = 200;
 	rsi_dbg(ERR_ZONE, "SDIO Bus suspend ===>\n");
 
 	if (!adapter) {
@@ -1539,7 +1538,34 @@ static int rsi_suspend(struct device *dev)
 		return -ENODEV;
 	}
 
-	common->suspend_in_prog = true;
+	rsi_mac80211_hw_scan_cancel(adapter->hw, adapter->priv->scan_vif);
+CHECK_AGAIN:
+	mutex_lock(&common->rx_lock);
+	down(&common->tx_access_lock);
+        if((!protocol_tx_access(common)) && (!common->rx_in_prog)
+		&& (adapter->ps_state != PS_DISABLE_REQ_SENT)
+		&& (adapter->ps_state != PS_ENABLE_REQ_SENT)){
+			if (adapter->ps_state == PS_NONE)
+				rsi_dbg(INFO_ZONE, "Device Power save not enabled\n");
+
+			rsi_dbg(ERR_ZONE, "Triggering Suspend\n");
+			common->suspend_in_prog = true;
+			up(&common->tx_access_lock);
+			mutex_unlock(&common->rx_lock);
+	}else
+	{
+		up(&common->tx_access_lock);
+		mutex_unlock(&common->rx_lock);
+		if(sleep_time)
+		{
+			msleep(10);
+			sleep_time -=10;
+			goto CHECK_AGAIN;
+		}else{
+			rsi_dbg(ERR_ZONE,("Returning failure for suspend as TX/RX is pending even after 200ms wait\n"));
+			return -ENOSYS;
+		}
+	}
 #ifdef CONFIG_RSI_WOW
 	if ((common->wow_flags & RSI_WOW_ENABLED) &&
 	    (common->wow_flags & RSI_WOW_NO_CONNECTION))

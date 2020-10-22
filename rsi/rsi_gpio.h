@@ -28,12 +28,5 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if defined(SABRESD_GPIO)
-#define RSI_GPIO_READ 2
-#define RSI_GPIO_WRITE 9
-#else
-#define RSI_GPIO_READ 27
-#define RSI_GPIO_WRITE 26
-#endif
-int get_device_status(void);
-void set_host_status(int value);
+int get_device_status(struct rsi_common *common);
+void set_host_status(int value, struct rsi_common *common);

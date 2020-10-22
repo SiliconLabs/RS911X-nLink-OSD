@@ -645,7 +645,7 @@ void init_bgscan_params(struct rsi_common *common)
 	common->bgscan_info.roam_threshold = 10;
 	common->bgscan_info.bgscan_periodicity = 30;
 	common->bgscan_info.num_bg_channels = 0;
-	common->bgscan_info.two_probe = 1;
+	common->bgscan_info.two_probe = 0;
 	common->bgscan_info.active_scan_duration = 20;
 	common->bgscan_info.passive_scan_duration = 70;
 	common->bgscan_info.channels2scan[0] = 1;
@@ -984,6 +984,8 @@ int rsi_send_sta_notify_frame(struct rsi_common *common,
 	int status;
 	u16 vap_id = 0;
 	int frame_len = sizeof(*peer_notify);
+	struct ieee80211_sta *sta;
+	u8 mpdu_density_map[] = {0,1,1,1,2,4,8,16};
 
 	rsi_dbg(INT_MGMT_ZONE,
 		"<==== Sending Peer Notify Packet ====>\n");
@@ -998,17 +1000,26 @@ int rsi_send_sta_notify_frame(struct rsi_common *common,
 
 	peer_notify = (struct rsi_peer_notify *)skb->data;
 
+	sta = common->stations[RSI_MAX_ASSOC_STAS].sta;
 	if (opmode == STA_OPMODE)
 		peer_notify->command = cpu_to_le16(PEER_TYPE_AP << 1);
-	else if (opmode == AP_OPMODE)
+	else if (opmode == AP_OPMODE) {
 		peer_notify->command = cpu_to_le16(PEER_TYPE_STA << 1);
+		sta = common->stations[sta_id].sta;
+	}
 
 	switch (notify_event) {
 	case STA_CONNECTED:
 		peer_notify->command |= cpu_to_le16(RSI_ADD_PEER);
+		common->peer_notify_state = true;
+		if(sta != NULL) {
+			peer_notify->mpdu_density = cpu_to_le16(mpdu_density_map[sta->ht_cap.ampdu_density]); 
+			peer_notify->sta_flags = cpu_to_le32((sta->ht_cap.ampdu_factor << 2) | ((qos_enable) ? 1 : 0));
+		}
 		break;
 	case STA_DISCONNECTED:
 		peer_notify->command |= cpu_to_le16(RSI_DELETE_PEER);
+		common->peer_notify_state = false;
 		break;
 	default:
 		break;
@@ -1016,8 +1027,7 @@ int rsi_send_sta_notify_frame(struct rsi_common *common,
 	adapter->peer_notify = true;
 	peer_notify->command |= cpu_to_le16((aid & 0xfff) << 4);
 	ether_addr_copy(peer_notify->mac_addr, bssid);
-	peer_notify->mpdu_density = cpu_to_le16(0x08); //FIXME check this
-	peer_notify->sta_flags = cpu_to_le32((qos_enable) ? 1 : 0);
+	ether_addr_copy(common->sta_bssid, bssid);
 	peer_notify->desc_word[0] = cpu_to_le16((frame_len - FRAME_DESC_SZ) |
 						(RSI_WIFI_MGMT_Q << 12));
 	peer_notify->desc_word[1] = cpu_to_le16(PEER_NOTIFY);
@@ -1409,7 +1419,8 @@ int rsi_send_common_dev_params(struct rsi_common *common)
 		 */
 		dev_cfgs->features_9116 = (common->ext_opt & 0xF) |
 					  (common->host_intf_on_demand << 4) |
-					  (common->crystal_as_sleep_clk << 5) |
+					  ((common->crystal_as_sleep_clk & 0x3) << 5) |
+					  (common->sleep_ind_gpio_sel << 7) |
 					  (common->feature_bitmap_9116 << 11);
 		dev_cfgs->dev_ble_roles = common->ble_roles;
 		/* In bt_bdr, bt_bdr_mode used a byte[0:7],
@@ -1743,7 +1754,8 @@ int rsi_set_channel(struct rsi_common *common,
 	mgmt_frame->desc_word[5] =
 		cpu_to_le16((char)(channel->max_antenna_gain));
 #endif
-	if (vif->type == NL80211_IFTYPE_AP && adapter->auto_chan_sel) {
+	if ((vif->type == NL80211_IFTYPE_AP && adapter->auto_chan_sel) &&
+		(adapter->idx < adapter->n_channels)) {
 		mgmt_frame->desc_word[2] = cpu_to_le16(TIMER_ENABLE);
 		mgmt_frame->desc_word[3] = cpu_to_le16(ACS_TIMEOUT_TYPE);
 		mgmt_frame->desc_word[3] |= cpu_to_le16(ACS_TIMEOUT_TIME << 8);
@@ -1882,16 +1894,21 @@ int rsi_send_vap_dynamic_update(struct rsi_common *common)
 		dynamic_frame->frame_body.keep_alive_period = cpu_to_le16(90);
 #else
 	dynamic_frame->frame_body.keep_alive_period = cpu_to_le16(90);
+	dynamic_frame->desc_word[6] =
+		cpu_to_le16(HW_BMISS_THRESHOLD); /* bmiss_threshold */
 #endif
 
+	dynamic_frame->desc_word[3] = cpu_to_le32(common->use_protection ? BIT(1) : 0);/* Self cts enable */
 #if 0
 	dynamic_frame->frame_body.mgmt_rate = cpu_to_le32(RSI_RATE_6);
 
 	dynamic_frame->desc_word[2] |= cpu_to_le32(BIT(1));/* Self cts enable */
-
-	dynamic_frame->desc_word[3] |= cpu_to_le16(BIT(0));/* fixed rate */
-	dynamic_frame->frame_body.data_rate = cpu_to_le16(0);
 #endif
+
+	if(common->fixed_rate_en) {
+		dynamic_frame->desc_word[3] |= cpu_to_le16(BIT(0));/* fixed rate */
+		dynamic_frame->frame_body.data_rate = cpu_to_le16(common->fixed_rate);
+	}
 
 	dynamic_frame->desc_word[7] |= cpu_to_le16((0 << 8)); /* vap id */
 
@@ -2001,6 +2018,24 @@ static bool rsi_map_rates(u16 rate, int *offset)
 }
 
 /**
+ * evaluate_moderate_rateindex() - This function is to find the moderate rate index
+ *
+ * @a: Pointer to an Array of rate values to be searched for moderate rate.
+ * @b: Required moderate rate
+ * @c: Rate Table size
+ * Return: modearate rate index as per the rate table being sent to Firmware.
+ */
+static u32 evaluate_moderate_rateindex(u16 *bitrate, u32 moderate_rate, u32 rate_table_sz)
+{
+  int ii;
+  for(ii = 0; ii < rate_table_sz; ii++) {
+    if(moderate_rate >= bitrate[ii])
+      return ii;
+  }
+  return (ii - 1);
+}
+
+/**
  * rsi_send_auto_rate_request() - This function is to set rates for connection
  *				  and send autorate request to firmware.
  * @common: Pointer to the driver private structure.
@@ -2014,31 +2049,33 @@ static int rsi_send_auto_rate_request(struct rsi_common *common,
 	struct ieee80211_vif *vif = common->priv->vifs[0];
 	struct sk_buff *skb;
 	struct rsi_auto_rate *auto_rate;
-	int ii = 0, jj = 0, kk = 0;
+	int ii = 0, jj = 0, kk = 0, m = 0, n = 0;
 	struct ieee80211_hw *hw = common->priv->hw;
 	u8 band = hw->conf.chandef.chan->band;
-	u8 num_supported_rates = 0;
-	u8 rate_table_offset, rate_offset = 0;
+	u8 rate_table_sz = 0;
+	u8 bg_mode = 0, g_mode = 0, b_mode = 0, n_only_mode = 0;
+	u16 moderate_rate_inx = 0;
 	u32 rate_bitmap = 0;
-	u16 *selected_rates, min_rate;
+	u16 *selected_rates, *bitrate, min_rate;
 	bool is_ht = false, is_sgi = false;
 
 	rsi_dbg(INT_MGMT_ZONE,
-		"<===== SENDING AUTO_RATE_IND FRAME =====>\n");
+			"<===== SENDING AUTO_RATE_IND FRAME =====>\n");
 
 	skb = dev_alloc_skb(MAX_MGMT_PKT_SIZE);
 	if (!skb) {
 		rsi_dbg(ERR_ZONE, "%s: Failed in allocation of skb\n",
-			__func__);
+				__func__);
 		return -ENOMEM;
 	}
 
 	memset(skb->data, 0, MAX_MGMT_PKT_SIZE);
 
 	selected_rates = kzalloc(2 * RSI_TBL_SZ, GFP_KERNEL);
+	bitrate = kzalloc(RSI_TBL_SZ, GFP_KERNEL);
 	if (!selected_rates) {
 		rsi_dbg(ERR_ZONE, "%s: Failed in allocation of mem\n",
-			__func__);
+				__func__);
 		dev_kfree_skb(skb);
 		return -ENOMEM;
 	}
@@ -2046,7 +2083,8 @@ static int rsi_send_auto_rate_request(struct rsi_common *common,
 
 	auto_rate = (struct rsi_auto_rate *)skb->data;
 
-	auto_rate->aarf_rssi = cpu_to_le16(((u16)3 << 6) | (u16)(18 & 0x3f));
+	//auto_rate->aarf_rssi = cpu_to_le16(((u16)3 << 6) | (u16)(18 & 0x3f));
+	auto_rate->aarf_rssi = cpu_to_le16(65); /*Keeping auto rate rssi to 65dbm*/
 	auto_rate->collision_tolerance = cpu_to_le16(3);
 	auto_rate->failure_limit = cpu_to_le16(3);
 	auto_rate->initial_boundary = cpu_to_le16(3);
@@ -2066,8 +2104,11 @@ static int rsi_send_auto_rate_request(struct rsi_common *common,
 		rate_bitmap = sta->supp_rates[band];
 		is_ht = sta->ht_cap.ht_supported;
 		if ((sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_20) ||
-		    (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40))
+				(sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40))
 			is_sgi = true;
+	}
+	if(band == NL80211_BAND_5GHZ) {
+		rate_bitmap <<= 4;
 	}
 	rsi_dbg(INFO_ZONE, "rate_bitmap = %x\n", rate_bitmap);
 	rsi_dbg(INFO_ZONE, "is_ht = %d\n", is_ht);
@@ -2077,80 +2118,127 @@ static int rsi_send_auto_rate_request(struct rsi_common *common,
 			min_rate = RSI_RATE_MCS0;
 		else
 			min_rate = RSI_RATE_1;
-		rate_table_offset = 0;
 	} else {
 		if ((rate_bitmap == 0) && (is_ht))
 			min_rate = RSI_RATE_MCS0;
 		else
 			min_rate = RSI_RATE_6;
-		rate_table_offset = 4;
+	}
+	b_mode = rate_bitmap & _11B_RATE_MAP;
+	g_mode = rate_bitmap & _11G_RATE_MAP;
+	bg_mode = g_mode && b_mode;
+
+	/*Rejecting 9 MBPS as we don't use it*/
+	rate_bitmap &= ~(RSI_RATE_9_INX);
+
+	/*Select table size and moderate rate based on the mode*/
+	if(bg_mode && is_ht) {
+		/*BGN MODE*/
+		rate_table_sz = 11;
+		rate_bitmap &= ~(RSI_RATE_5_5_INX | RSI_RATE_11_INX);
+		moderate_rate_inx = STD_RATE_36;
+	} else if(bg_mode) {
+		/*BG MODE*/
+		rate_table_sz = 9;
+		rate_bitmap &= ~(RSI_RATE_5_5_INX | RSI_RATE_11_INX);
+		moderate_rate_inx = STD_RATE_36;
+	} else if(g_mode && is_ht) {
+		/*GN MODE*/
+		rate_table_sz = 9;
+		moderate_rate_inx = STD_RATE_36;
+	} else if(g_mode) {
+		/*GONLY MODE*/
+		rate_table_sz = 7;
+		moderate_rate_inx = STD_RATE_36;
+	} else if(b_mode) {
+		/*BONLY MODE*/
+		rate_table_sz = 4;
+		moderate_rate_inx = STD_RATE_5_5;
+	} else if(is_ht) {
+		/*NONLY MODE*/
+		rate_table_sz = 9;
+		n_only_mode = 1;
+		moderate_rate_inx = RSI_RATE_MCS4;
+	} else {
+		rsi_dbg(ERR_ZONE, "No Rates supported\n");
 	}
 
-	for (ii = 0, jj = 0;
-	     ii < (ARRAY_SIZE(rsi_rates) - rate_table_offset); ii++) {
-		if (rate_bitmap & BIT(ii)) {
-			selected_rates[jj++] =
-			(rsi_rates[ii + rate_table_offset].bitrate / 5);
-			rate_offset++;
-		}
-	}
-	num_supported_rates = jj;
-
-	if (is_ht) {
-		for (ii = 0; ii < ARRAY_SIZE(mcs); ii++)
-			selected_rates[jj++] = mcs[ii];
-		num_supported_rates += ARRAY_SIZE(mcs);
-		rate_offset += ARRAY_SIZE(mcs);
+	/*Extracting rates from the Bitmap*/
+	for (ii = 0, jj = 0;ii < ARRAY_SIZE(rsi_rates); ii++) {
+		if (rate_bitmap & BIT(ii))
+			selected_rates[jj++] = (rsi_rates[ii].bitrate / 5);
 	}
 
 	sort(selected_rates, jj, sizeof(u16), &rsi_compare, NULL);
 
+	ii = 0;
+	n = 0;
+	kk = ARRAY_SIZE(rsi_mcsrates) - 1;
+	/*Filling 2 rates of ht mode*/
+	if(is_ht) {
+		if(is_sgi) {
+			auto_rate->supported_rates[ii++] = cpu_to_le16(rsi_mcsrates[kk] | BIT(9));
+			bitrate[n++] = rsi_mcsrates[kk] | BIT(9);
+		}
+		auto_rate->supported_rates[ii++] = cpu_to_le16(rsi_mcsrates[kk]);
+		bitrate[n++] = rsi_mcsrates[kk];
+		kk--;
+	}
 	/* mapping the rates to RSI rates */
-	for (ii = 0; ii < jj; ii++) {
-		if (rsi_map_rates(selected_rates[ii], &kk)) {
-			auto_rate->supported_rates[ii] =
-				cpu_to_le16(rsi_rates[kk].hw_value);
-		} else {
+	if(n_only_mode) {
+		for (; (ii < rate_table_sz) && (kk >= 0); ii++,kk--) {
 			auto_rate->supported_rates[ii] =
 				cpu_to_le16(rsi_mcsrates[kk]);
+			bitrate[n++] = rsi_mcsrates[kk];
+		}
+	} else /*BGN mode*/{
+		for (m = 0; m < jj; m++) {
+			if (rsi_map_rates(selected_rates[m], &kk)) {
+				auto_rate->supported_rates[ii++] =
+					cpu_to_le16(rsi_rates[kk].hw_value);
+				bitrate[n++] = selected_rates[m];
+			}
 		}
 	}
-
+	/*Stuffing the unfilled entries with min rate*/
+	for (; ii < rate_table_sz; ii++, n++) {
+		auto_rate->supported_rates[ii] =
+			cpu_to_le16(auto_rate->supported_rates[ii-1]);
+		bitrate[n] = bitrate[n - 1];
+	}
 	/* loading HT rates in the bottom half of the auto rate table */
 	if (is_ht) {
-		for (ii = rate_offset, kk = ARRAY_SIZE(rsi_mcsrates) - 1;
-		     ii < rate_offset + 2 * ARRAY_SIZE(rsi_mcsrates); ii++) {
-			if (is_sgi || conf_is_ht40(&common->priv->hw->conf)) {
-				auto_rate->supported_rates[ii++] =
-					cpu_to_le16(rsi_mcsrates[kk] |
-							ENABLE_SHORTGI_RATE);
-			} else {
-				auto_rate->supported_rates[ii++] =
-					cpu_to_le16(rsi_mcsrates[kk]);
-			}
+		kk = ARRAY_SIZE(rsi_mcsrates) - 1;
+		if (is_sgi) {
+			auto_rate->supported_rates[ii++] =
+				cpu_to_le16(rsi_mcsrates[kk] | BIT(9));
+		}
+		for (; (ii < 2 * rate_table_sz) && (kk >= 0); ii++,kk--) {
 			auto_rate->supported_rates[ii] =
-				cpu_to_le16(rsi_mcsrates[kk--]);
+				cpu_to_le16(rsi_mcsrates[kk]/* | BIT(9)*/);
 		}
 
-		for (; ii < (RSI_TBL_SZ - 1); ii++) {
-			auto_rate->supported_rates[ii] =
-				cpu_to_le16(rsi_mcsrates[0]);
-		}
+	}
+	/*Stuffing the unfilled entries with min rate*/
+	for (; ii < 2 * rate_table_sz; ii++) {
+		auto_rate->supported_rates[ii] =
+			cpu_to_le16(rsi_mcsrates[0]);
 	}
 
-	for (; ii < RSI_TBL_SZ; ii++)
-		auto_rate->supported_rates[ii] = cpu_to_le16(min_rate);
+	auto_rate->num_supported_rates = cpu_to_le16(rate_table_sz * 2);
+	auto_rate->moderate_rate_inx = evaluate_moderate_rateindex(bitrate, moderate_rate_inx, rate_table_sz);;
+	rsi_dbg(INT_MGMT_ZONE, "moderate rate index is %d\n", auto_rate->moderate_rate_inx);
 
-	auto_rate->num_supported_rates = cpu_to_le16(num_supported_rates * 2);
-	auto_rate->moderate_rate_inx = cpu_to_le16(num_supported_rates / 2);
-	num_supported_rates *= 2;
+	for (ii=0; ii < rate_table_sz * 2; ii++)
+		rsi_dbg(INFO_ZONE, "Auto rate code is  ==>  0x%x\n", auto_rate->supported_rates[ii]);
 
 	auto_rate->desc_word[0] = cpu_to_le16((sizeof(*auto_rate) -
-					      FRAME_DESC_SZ) |
-					      (RSI_WIFI_MGMT_Q << 12));
+				FRAME_DESC_SZ) |
+			(RSI_WIFI_MGMT_Q << 12));
 
 	skb_put(skb, sizeof(struct rsi_auto_rate));
 	kfree(selected_rates);
+	kfree(bitrate);
 	rsi_hex_dump(INT_MGMT_ZONE, "AUTO_RATE FRAME:", skb->data, skb->len);
 
 	return rsi_send_internal_mgmt_frame(common, skb);
@@ -2170,27 +2258,9 @@ void rsi_validate_bgscan_channels(struct rsi_hw *adapter,
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *ch;
 	struct wiphy *wiphy = adapter->hw->wiphy; 
-	u16 bgscan_channels[MAX_BGSCAN_CHANNELS] = {1, 2, 3, 4, 5, 6, 7, 8, 9,
-						    10, 11, 12, 13, 14, 36, 40,
-						    44, 48, 52, 56, 60, 64, 100,
-						    104, 108, 112, 116, 120, 124,
-						    128, 132, 136, 140, 149, 153,
-						    157, 161, 165};
-
 	int ch_num, i;
 	int num_valid_chs = 0, cnt;
 	struct rsi_common *common = adapter->priv;
-
-	/* If user passes 0 for num of bgscan channels, take all channels */
-	if (params->num_user_channels == 0) {
-		if (adapter->priv->num_supp_bands > 1)
-			params->num_user_channels = MAX_BGSCAN_CHANNELS;
-		else
-			params->num_user_channels = 14;
-
-		for (cnt = 0; cnt < params->num_user_channels; cnt++)
-			params->user_channels[cnt] = bgscan_channels[cnt];
-	}
 
 	rsi_dbg(INFO_ZONE, "Final bgscan channels:\n");
 	for (cnt = 0; cnt < params->num_user_channels; cnt++) {
@@ -2223,7 +2293,7 @@ void rsi_validate_bgscan_channels(struct rsi_hw *adapter,
 		if (ch->flags & IEEE80211_CHAN_DISABLED)
 			continue;
 
-		if (adapter->device_model == RSI_DEV_9113) {
+		if (common->num_supp_bands > 1) {
 			params->channels2scan[num_valid_chs] = ch_num;
 			rsi_dbg(INFO_ZONE, "%d ", ch_num);
 			if ((ch->flags & IEEE80211_CHAN_RADAR)) {
@@ -2231,23 +2301,9 @@ void rsi_validate_bgscan_channels(struct rsi_hw *adapter,
 				params->channels2scan[num_valid_chs] |=
 					(cpu_to_le16(BIT(15))); /* DFS indication */
 			}
-			num_valid_chs++;
-		} else {
-			if (common->band == NL80211_BAND_2GHZ && ch_num <= 14) {
-				params->channels2scan[num_valid_chs] = ch_num;
-				rsi_dbg(INFO_ZONE, "%d ", ch_num);
-				num_valid_chs++;
-			} else if (common->band == NL80211_BAND_5GHZ && ch_num > 14) {
-				params->channels2scan[num_valid_chs] = ch_num;
-				rsi_dbg(INFO_ZONE, "%d ", ch_num);
-				if ((ch->flags & IEEE80211_CHAN_RADAR)) {
-					rsi_dbg(INFO_ZONE, "[DFS]");
-					params->channels2scan[num_valid_chs] |=
-						(cpu_to_le16(BIT(15)));
-				}
-				num_valid_chs++;
-			}
-		}
+		} else
+			params->channels2scan[num_valid_chs] = ch_num;
+		num_valid_chs++;
 	}
 
 	params->num_bg_channels = num_valid_chs;
@@ -2267,12 +2323,16 @@ int rsi_send_bgscan_params(struct rsi_common *common, int enable)
 	struct bgscan_config_params *info = &common->bgscan_info;
 	struct sk_buff *skb;
 	u16 frame_len = sizeof(*bgscan);
+	bool status = 0;
 
 	rsi_dbg(INT_MGMT_ZONE,
 		"<===== Sending bgscan params frame ====>\n");
-
-	rsi_validate_bgscan_channels(common->priv, info);
-	if (!info->num_bg_channels) {
+	if (common->debugfs_bgscan)
+		status = rsi_validate_debugfs_bgscan_channels(common);
+	else
+		rsi_validate_bgscan_channels(common->priv, info);
+	if (!info->num_bg_channels || status) {
+		common->debugfs_bgscan = false;
 		rsi_dbg(ERR_ZONE, "##### No valid bgscan channels #####\n");
 		return -1;
 	}
@@ -2300,19 +2360,42 @@ int rsi_send_bgscan_params(struct rsi_common *common, int enable)
 			cpu_to_le16(info->passive_scan_duration);
 	bgscan->two_probe = info->two_probe;
 
+	if (!enable) {
+		bgscan->num_bg_channels = 1;
+		memset(bgscan->channels2scan, 0, sizeof(bgscan->channels2scan));
+		goto out;
+	}
+
 	if (common->debugfs_bgscan) {
-		bgscan->num_bg_channels = common->bgscan_info.num_user_channels;
+		bgscan->num_bg_channels = common->bgscan_info.debugfs_bg_channels;
 		memcpy(bgscan->channels2scan,
-			common->bgscan_info.user_channels,
+			common->bgscan_info.debugfs_channels,
 			bgscan->num_bg_channels * 2);
 	} else {
-		memcpy(bgscan->channels2scan,
-			info->channels2scan,
-			info->num_bg_channels * 2);
-		bgscan->num_bg_channels = info->num_bg_channels;
+		if (common->bgscan_info.num_user_channels > MAX_BG_CHAN_FROM_USER) {
+			if (!common->send_initial_bgscan_chan) {
+				memcpy(bgscan->channels2scan,
+						info->channels2scan,
+						MAX_BG_CHAN_FROM_USER * 2);
+				bgscan->num_bg_channels = MAX_BG_CHAN_FROM_USER;
+				common->send_initial_bgscan_chan = true;
+			} else {
+				memcpy(bgscan->channels2scan,
+				       info->channels2scan + MAX_BG_CHAN_FROM_USER,
+				       (info->num_bg_channels - MAX_BG_CHAN_FROM_USER) * 2);
+				bgscan->num_bg_channels = (info->num_bg_channels - MAX_BG_CHAN_FROM_USER);
+				common->send_initial_bgscan_chan = false;
+			}
+		} else {
+			memcpy(bgscan->channels2scan,
+					info->channels2scan,
+					info->num_bg_channels * 2);
+			bgscan->num_bg_channels = info->num_bg_channels;
+		}
 	}
+out:
 	skb_put(skb, frame_len);
-	rsi_hex_dump(INT_MGMT_ZONE, "Internal Mgmt Pkt", skb->data, skb->len);
+	rsi_hex_dump(MGMT_TX_ZONE, "Bgscan Params", skb->data, skb->len);
 
 	return rsi_send_internal_mgmt_frame(common, skb);
 }
@@ -2331,14 +2414,21 @@ int rsi_send_bgscan_probe_req(struct rsi_common *common)
 	u16 frame_len = sizeof(*bgscan);
 	u16 len = 1500;
 	u16 pbreq_len = 0;
+	struct sk_buff *probereq_skb;
+	void *temp_buf;
+	struct rsi_hw *adapter = common->priv;
+	struct cfg80211_scan_request *scan_req = common->scan_request;
+	struct ieee80211_vif *vif = adapter->vifs[adapter->sc_nvifs - 1];
 
-	rsi_dbg(INT_MGMT_ZONE,
+	rsi_dbg(MGMT_TX_ZONE,
 		"<==== Sending bgscan probe req frame ====>\n");
 
 	skb = dev_alloc_skb(frame_len + len);
 	if (!skb)
 		return -ENOMEM;
 	memset(skb->data, 0, frame_len + len);
+	if (!vif)
+		return -EINVAL;
 
 	bgscan = (struct rsi_bgscan_probe *)skb->data;
 
@@ -2353,18 +2443,53 @@ int rsi_send_bgscan_probe_req(struct rsi_common *common)
 	}
 
 	bgscan->channel_scan_time = cpu_to_le16(20);
-	if (common->bgscan_probe_req_len > 0) {
-		pbreq_len = common->bgscan_probe_req_len;
-		bgscan->probe_req_length = pbreq_len;
-		memcpy(&skb->data[frame_len], common->bgscan_probe_req,
-		       common->bgscan_probe_req_len);
+	if (common->bgscan_info.two_probe && common->bgscan_ssid_len) {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(3, 18, 140)
+		probereq_skb = ieee80211_probereq_get(common->priv->hw,
+						      vif,
+						      common->bgscan_ssid,
+						      common->bgscan_ssid_len,
+						      scan_req->ie_len);
+#else
+		probereq_skb = ieee80211_probereq_get(common->priv->hw,
+						      vif->addr,
+						      common->bgscan_ssid,
+						      common->bgscan_ssid_len,
+						      scan_req->ie_len);
+#endif
+	} else {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(3, 18, 140)
+		probereq_skb = ieee80211_probereq_get(common->priv->hw,
+						      vif,
+						      NULL,
+						      0,
+						      scan_req->ie_len);
+#else
+		probereq_skb = ieee80211_probereq_get(common->priv->hw,
+						      vif->addr,
+						      NULL,
+						      0,
+						      scan_req->ie_len);
+#endif
 	}
-
+	if (!probereq_skb) {
+		dev_kfree_skb(skb);
+		return -ENOMEM;
+	}
+	if (scan_req->ie_len) {
+		temp_buf = skb_put(probereq_skb,  scan_req->ie_len);
+		memcpy(temp_buf,  scan_req->ie, scan_req->ie_len);
+	}
+	pbreq_len = probereq_skb->len;
+	bgscan->probe_req_length = pbreq_len;
+	memcpy(&skb->data[frame_len], probereq_skb->data,
+			probereq_skb->len);
+	dev_kfree_skb(probereq_skb);
 	bgscan->desc_word[0] = cpu_to_le16((frame_len - FRAME_DESC_SZ + pbreq_len) |
 					   (RSI_WIFI_MGMT_Q << 12));
 
 	skb_put(skb, frame_len + pbreq_len);
-	rsi_hex_dump(INT_MGMT_ZONE, "Internal Mgmt Pkt", skb->data, skb->len);
+	rsi_hex_dump(MGMT_TX_ZONE, "Bgscan Probe_Req", skb->data, skb->len);
 
 	return rsi_send_internal_mgmt_frame(common, skb);
 }
@@ -2637,12 +2762,10 @@ int rsi_send_ps_request(struct rsi_hw *adapter, bool enable)
 	else
 		ps->ps_sleep.connected_sleep = DEEP_SLEEP;
 
-	ps->ps_listen_interval = cpu_to_le32(ps_info->listen_interval);
+	ps->ps_listen_interval_duration = cpu_to_le32(ps_info->listen_interval_duration);
 	ps->ps_dtim_interval_duration = cpu_to_le32(ps_info->dtim_interval_duration);
 
-	if (ps->ps_listen_interval > ps->ps_dtim_interval_duration)
-		ps->ps_listen_interval = 0;
-
+	ps->ps_num_dtim_intervals = cpu_to_le16(ps_info->num_dtims_per_sleep);
 	skb_put(skb, frame_len);
 	rsi_hex_dump(INT_MGMT_ZONE, "PS-REQ FRAME", skb->data, skb->len);
 
@@ -3002,6 +3125,10 @@ static int init_channel_timer(struct rsi_hw *adapter, u32 timeout)
 	struct rsi_common *common = adapter->priv;
 
 	rsi_reset_event(&common->chan_change_event);
+	if(timer_pending(&common->scan_timer)) {
+		rsi_dbg(ERR_ZONE, "%s : Timer Pending. This Case Should not occur\n",__func__);
+		del_timer(&common->scan_timer);
+	}
 #if LINUX_VERSION_CODE < KERNEL_VERSION (4, 15, 0)
 	init_timer(&common->scan_timer);
 	common->scan_timer.data = (unsigned long)adapter;
@@ -3019,7 +3146,6 @@ static int init_channel_timer(struct rsi_hw *adapter, u32 timeout)
 /**
  * This function prepares Probe request frame and send it to LMAC.
  * @param  Pointer to Adapter structure.
- * @param  Type of scan(Active/Passive).
  * @param  Broadcast probe.
  * @param  Pointer to the destination address.
  * @param  Indicates LMAC/UMAC Q number.
@@ -3028,8 +3154,7 @@ static int init_channel_timer(struct rsi_hw *adapter, u32 timeout)
 int rsi_send_probe_request(struct rsi_common *common,
 			   struct cfg80211_scan_request *scan_req,
 			   u8 n_ssid,
-			   u8 channel,
-			   u8 scan_type)
+			   u8 channel)
 {
 	struct cfg80211_ssid *ssid_info;
 	struct ieee80211_tx_info *info;
@@ -3061,23 +3186,18 @@ int rsi_send_probe_request(struct rsi_common *common,
 	memset(skb->data, 0, skb->len);
 	skb_reserve(skb, DWORD_ALIGNMENT);
 
-	if (scan_type == 0) {
-		pos = skb->data;
-	
-		/*
-		 * probe req frame format
-		 * ssid
-		 * supported rates
-		 * RSN (optional)
-		 * extended supported rates
-		 * WPA (optional)
-		 * user-specified ie's
-		 */
-		hdr = (struct ieee80211_hdr *)skb->data;
-	} else {
-		pos = common->bgscan_probe_req;
-		hdr = (struct ieee80211_hdr *)common->bgscan_probe_req; 
-	}
+	pos = skb->data;
+       /*
+	* probe req frame format
+	* ssid
+	* supported rates
+	* RSN (optional)
+	* extended supported rates
+	* WPA (optional)
+	* user-specified ie's
+	*/
+
+	hdr = (struct ieee80211_hdr *)skb->data;
 	hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | 
 					 IEEE80211_STYPE_PROBE_REQ);
 	hdr->duration_id = 0x0;
@@ -3103,27 +3223,6 @@ int rsi_send_probe_request(struct rsi_common *common,
         if (scan_req->ie_len) 
                 memcpy(pos, scan_req->ie, scan_req->ie_len);
        
-	if (scan_type == 1) {
-		if (len > RSI_MAX_BGS_PROBEREQ_LEN) {
-			u16 t_len = MIN_802_11_HDR_LEN;
-
-			/* Cut IEs from last */
-			pos = &skb->data[MIN_802_11_HDR_LEN];
-			while (true) {
-				if ((t_len + pos[1] + 2) >
-				    RSI_MAX_BGS_PROBEREQ_LEN) {
-					skb_trim(skb, t_len);
-					len = t_len;
-					break;
-				}
-				t_len += pos[1] + 2;
-				pos += (pos[1] + 2);
-			}
-		}
-		common->bgscan_probe_req_len = len;	
-		goto out;
-	}
-
 	if ((common->iface_down == true))
 		goto out;
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 20, 17)
@@ -3167,31 +3266,6 @@ out:
 	return 0;
 }
 
-void rsi_scan_complete(struct work_struct *work)
-{
-	struct rsi_common *common =
-		container_of(work, struct rsi_common, scan_complete_work);
-	struct rsi_hw *adapter = common->priv;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0))
-	struct cfg80211_scan_info info;
-	info.aborted = false;
-	/* Waiting before reporting scan_done event to CFG. 
- 	 * It is the requirement of iw, to give some time 
- 	 * between scan_request and scan_done event so that 
- 	 * it creates RX socket to receive event*/
-	msleep(1);
-	ieee80211_scan_completed(adapter->hw, &info);
-#else
-	/* Waiting before reporting scan_done event to CFG. 
- 	 * It is the requirement of iw, to give some time 
- 	 * between scan_request and scan_done event so that 
- 	 * it creates RX socket to receive event*/
-	msleep(1); 	
-	ieee80211_scan_completed(adapter->hw, false);
-#endif
-}
-
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 20, 17)
 void rsi_scan_start(struct work_struct *work)
 {
@@ -3207,14 +3281,6 @@ void rsi_scan_start(struct work_struct *work)
 	struct rsi_hw *adapter = common->priv;
 	struct ieee80211_vif *vif = adapter->vifs[adapter->sc_nvifs - 1];
 
-	if (vif->type == NL80211_IFTYPE_AP) {
-		if (adapter->auto_chan_sel == ACS_DISABLE) {
-			adapter->auto_chan_sel = ACS_ENABLE;
-			rsi_dbg(INFO_ZONE, "Auto Channel selection scan start");
-		}
-		adapter->idx = 0;
-	}
-	
 	scan_req = common->scan_request;
 	if (!scan_req)
 		return;
@@ -3255,40 +3321,44 @@ void rsi_scan_start(struct work_struct *work)
 			break;
 		rsi_reset_event(&common->chan_set_event);
 
-		if ((cur_chan->flags & IEEE80211_CHAN_NO_IR) ||
-		    (cur_chan->flags & IEEE80211_CHAN_RADAR)) {
-			/* DFS Channel */
-			/* Program passive scan duration */
+		if (vif->type == NL80211_IFTYPE_AP && adapter->auto_chan_sel) {
 			init_channel_timer(common->priv, PASSIVE_SCAN_DURATION);
-		} else if (!adapter->auto_chan_sel) {
-			/* Send probe request */
-			for (jj = 0; jj < scan_req->n_ssids; jj++) {
-				rsi_send_probe_request(common, 
-						       scan_req,
-						       jj,
-						       cur_chan->hw_value,
-						       0);
-				if (common->iface_down == true) {
-					common->scan_in_prog = false;
-					return;
+		} else {
+			if ((cur_chan->flags & IEEE80211_CHAN_NO_IR) ||
+					(cur_chan->flags & IEEE80211_CHAN_RADAR)) {
+				/* DFS Channel */
+				/* Program passive scan duration */
+				init_channel_timer(common->priv, PASSIVE_SCAN_DURATION);
+			} else if (!adapter->auto_chan_sel) {
+				/* Send probe request */
+				for (jj = 0; jj < scan_req->n_ssids; jj++) {
+					rsi_send_probe_request(common,
+							scan_req,
+							jj,
+							cur_chan->hw_value);
+					if (common->iface_down == true) {
+						common->scan_in_prog = false;
+						return;
+					}
+					rsi_reset_event(&common->probe_cfm_event);
+					status = rsi_wait_event(&common->probe_cfm_event,
+							msecs_to_jiffies(50));
+					if (status < 0) {
+						rsi_dbg(ERR_ZONE,
+								"Did not received probe confirm\n");
+						common->scan_in_prog = false;
+						return;
+					}
+					rsi_reset_event(&common->probe_cfm_event);
 				}
-				rsi_reset_event(&common->probe_cfm_event);
-				status = rsi_wait_event(&common->probe_cfm_event,
-					       msecs_to_jiffies(50));
-				if (status < 0) {
-					rsi_dbg(ERR_ZONE,
-						"Did not received probe confirm\n");
-					common->scan_in_prog = false;
-					return;
-				}
-				rsi_reset_event(&common->probe_cfm_event);
+				init_channel_timer(common->priv, ACTIVE_SCAN_DURATION);
 			}
-			init_channel_timer(common->priv, ACTIVE_SCAN_DURATION);
 		}
 		if (!common->scan_in_prog)
 			break;
 		if (common->iface_down)
 			break;
+
 
 		status = rsi_wait_event(&common->chan_change_event, 
 					EVENT_WAIT_FOREVER);
@@ -3627,8 +3697,8 @@ static int rsi_handle_ta_confirm(struct rsi_common *common, u8 *msg)
 
 	case SCAN_REQUEST:
 		rsi_dbg(INFO_ZONE, "Scan confirm.\n");
-		if (vif->type == NL80211_IFTYPE_AP &&
-		    adapter->auto_chan_sel) {
+		if ((vif->type == NL80211_IFTYPE_AP && adapter->auto_chan_sel) &&
+				(adapter->idx < adapter->n_channels)) {
 			u8 id;
 			struct acs_stats_s *acs_data =
 				(struct acs_stats_s *)(&msg[FRAME_DESC_SZ]);
@@ -3673,13 +3743,40 @@ static int rsi_handle_ta_confirm(struct rsi_common *common, u8 *msg)
 		rsi_dbg(INT_MGMT_ZONE,
 			"<==== Received BG Scan Complete Event ===>\n");
 		if (common->hwscan_en) {
+			if (common->send_initial_bgscan_chan) {
+				rsi_send_bgscan_params(common, 1);
+				rsi_send_bgscan_probe_req(common);
+				common->bgscan_en = 1;
+			} else {
+				if ((common->bgscan_info.num_user_channels > MAX_BG_CHAN_FROM_USER)
+					 && (!common->debugfs_bgscan)) {
+					rsi_send_bgscan_params(common, 0);
+					common->bgscan_en = 0;
+				}
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0))
-			info.aborted = false;
-			ieee80211_scan_completed(adapter->hw, &info);
+				info.aborted = false;
+				ieee80211_scan_completed(adapter->hw, &info);
 #else	
-			ieee80211_scan_completed(adapter->hw, false);
+				ieee80211_scan_completed(adapter->hw, false);
 #endif
-			common->hwscan_en = false;
+				mutex_lock(&common->bgscan_lock);
+				common->bgscan_in_prog = false;
+				if (common->debugfs_bgscan_en) {
+					if (common->debugfs_stop_bgscan) {
+						rsi_send_bgscan_params(common, 0);
+						common->bgscan_en = false;
+						common->debugfs_stop_bgscan = false;
+						common->debugfs_bgscan = false;
+						init_bgscan_params(common);
+					} else {
+						rsi_send_bgscan_params(common, 1);
+						common->bgscan_en = true;
+					}
+					common->debugfs_bgscan_en = false;
+				}
+				mutex_unlock(&common->bgscan_lock);
+				common->hwscan_en = false;
+			}
 		}
 		if (common->hw_scan_cancel)
 			rsi_set_event(&common->cancel_hw_scan_event);
@@ -3856,6 +3953,25 @@ int rsi_mgmt_pkt_recv(struct rsi_common *common, u8 *msg)
 				}
 			}
 		}
+		if ((msg[15] & 0xFF) == NULLDATA_CONFIRM) {
+			struct sk_buff *skb;
+			u8 status = msg[12];
+			u8 sta_id = msg[13];
+			rsi_dbg(MGMT_DEBUG_ZONE,
+					"NULL DATA CNFM RECVD sta_id = %d\n",sta_id);
+			skb = (vif->type == NL80211_IFTYPE_STATION) ?
+				common->stations[RSI_MAX_ASSOC_STAS].sta_skb:
+				common->stations[sta_id].sta_skb;
+			if (status) {
+				rsi_indicate_tx_status(common->priv,
+						skb,
+						NULLDATA_SUCCESS);
+			} else {
+				rsi_indicate_tx_status(common->priv,
+						skb,
+						NULLDATA_FAIL);
+			}
+		}
 		break;
 
 	case PS_NOTIFY_IND:
@@ -3929,8 +4045,9 @@ int rsi_mgmt_pkt_recv(struct rsi_common *common, u8 *msg)
 				"##### Un-intentional Wakeup #####\n");
 			break;
 		}
+		break;
 #ifdef CONFIG_RSI_11K
-		case RADIO_MEAS_RPT:
+	case RADIO_MEAS_RPT:
 		rsi_hex_dump(ERR_ZONE, "11K RRM RX CMD FRAME",
 			     msg, msg_len);
 		common->priv->rrm_enq_state = 0;
