@@ -1,3 +1,9 @@
+RS9116 n-Link Open Source Driver documentation is available online and to get started with n-link go to  https://docs.silabs.com/rs9116/latest/nlink-documentation
+The online documentation includes:
+- Evaluation Kit User's Guide 
+- Open Source Driver Technical Reference Manual
+- Application Notes
+
 This software package contains following folders/files :
 
 Package
@@ -19,7 +25,7 @@ Content Description
 		This folder contains configuration files of supplicant, hostapd and scripts for running dhcp server.
 
 	- Firmware: 
-		This folder contains firmware binaries for 9116.
+		This folder contains firmware binaries for RS9116.
 
 	- rsi
-		This folder contains source files Open source driver.
+		This folder contains the source files for the Open source driver.
