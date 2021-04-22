@@ -2737,7 +2737,7 @@ int rsi_send_ps_request(struct rsi_hw *adapter, bool enable)
 	if (common->uapsd_bitmap) {
 //		ps->ps_mimic_support = 1;
 		ps->ps_uapsd_acs = common->uapsd_bitmap;
-		ps->ps_uapsd_acs = (adapter->hw->uapsd_max_sp_len <<
+		ps->ps_uapsd_acs |= (adapter->hw->uapsd_max_sp_len <<
 				    IEEE80211_WMM_IE_STA_QOSINFO_SP_SHIFT) |
 				    IEEE80211_WMM_IE_STA_QOSINFO_AC_MASK;
 		ps->ps_uapsd_wakeup_period = ps_info->uapsd_wakeup_period;
