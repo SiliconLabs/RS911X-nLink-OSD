@@ -34,6 +34,7 @@ rsi_91x-y			+= rsi_91x_mac80211.o
 rsi_91x-y			+= rsi_91x_mgmt.o
 rsi_91x-y			+= rsi_91x_hal.o
 rsi_91x-y			+= rsi_91x_ps.o
+rsi_91x-$(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)	+= rsi_91x_gpio.o
 rsi_91x-$(CONFIG_RSI_DEBUGFS)	+= rsi_91x_debugfs.o
 rsi_91x-$(CONFIG_RSI_BT_ALONE)	+= rsi_91x_hci.o
 rsi_91x-$(CONFIG_RSI_BT_ANDROID) += rsi_91x_bluedroid.o

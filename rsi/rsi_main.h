@@ -42,7 +42,7 @@ struct rsi_hw;
 
 #include "rsi_ps.h"
 
-#define DRV_VER				"RS9116.NB0.NL.GNU.LNX.OSD.2.0.0.0024"
+#define DRV_VER				"RS9116.NB0.NL.GNU.LNX.OSD.2.3.2.0003"
 
 #define ERR_ZONE                        BIT(0) /* Error Msgs		*/
 #define INFO_ZONE                       BIT(1) /* Generic Debug Msgs	*/
@@ -573,7 +573,7 @@ struct rsi_common {
 	/* 9116 related */
 	u16 peer_dist;
 	u16 bt_feature_bitmap;
-	u16 uart_debug;
+	u8 uart_debug;
 	u16 ext_opt;
 	u8 host_intf_on_demand;
 	u8 crystal_as_sleep_clk;
@@ -605,6 +605,7 @@ struct rsi_common {
 	u8 sta_bssid[ETH_ALEN];
 	u8 fixed_rate_en;
 	u16 fixed_rate;
+	u8 xtal_good_time;
 };
 
 enum host_intf {

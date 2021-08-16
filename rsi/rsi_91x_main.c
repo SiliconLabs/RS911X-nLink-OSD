@@ -84,7 +84,7 @@ u8 ps_sleep_type = 1;
 EXPORT_SYMBOL_GPL(ps_sleep_type);
 u16 peer_dist;
 u16 bt_feature_bitmap;
-u16 uart_debug;
+u8 uart_debug;
 /*
  * Default extended options is (0)
  */
@@ -208,7 +208,7 @@ MODULE_PARM_DESC(peer_dist, "\npeer distance to config ack timeout value\n");
 module_param(bt_feature_bitmap, ushort, 0);
 MODULE_PARM_DESC(bt_feature_bitmap, "\nFeature bitmap for BT\n");
 
-module_param(uart_debug, ushort, 0);
+module_param(uart_debug, byte, 0);
 MODULE_PARM_DESC(uart_debug, "\nFeature bitmap for uart debug\n");
 
 module_param(ext_opt, ushort, 0);
@@ -262,6 +262,11 @@ module_param(enable_40mhz_in_2g, bool, 0);
 MODULE_PARM_DESC(enable_40mhz_in_2g, "\nSupport of 40Mhz in 2.4Gh\n\
 '1' - Enable.\n'0' - Disable\n");
 
+
+u8 xtal_good_time;
+module_param(xtal_good_time, byte, 0);
+MODULE_PARM_DESC(xtal_good_time, "\nCrystal good time value in Micro-Second\n\
+'0' - 1000 \n'1' - 2000 \n'2' - 3000 \n'3' - 600\n");
 
 u16 rsi_zone_enabled = ERR_ZONE;
 module_param(rsi_zone_enabled, ushort, S_IRUGO);
@@ -791,6 +796,7 @@ struct rsi_hw *rsi_91x_init(void)
 	common->enable_40mhz_in_2g = enable_40mhz_in_2g;
 	common->enabled_uapsd = enabled_uapsd;
 	common->max_sp_len = max_sp_len;
+	common->xtal_good_time = xtal_good_time;
 
 	if (rsi_create_kthread(common,
 			       &common->tx_thread,

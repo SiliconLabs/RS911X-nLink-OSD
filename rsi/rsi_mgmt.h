@@ -567,7 +567,8 @@ struct rsi_config_vals {
 	u8 antenna_sel_val;
 	u16 dev_peer_dist;
 	u16 dev_bt_feature_bitmap;
-	u16 uart_dbg;
+	u8 uart_dbg;
+	u8 xtal_good_time;
 	u16 features_9116;
 	u16 dev_ble_roles;
 	u16 bt_bdr;

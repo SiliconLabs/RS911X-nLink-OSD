@@ -1409,6 +1409,7 @@ int rsi_send_common_dev_params(struct rsi_common *common)
 	dev_cfgs->dev_peer_dist = common->peer_dist;
 	dev_cfgs->dev_bt_feature_bitmap = common->bt_feature_bitmap;
 	dev_cfgs->uart_dbg = common->uart_debug;
+	dev_cfgs->xtal_good_time = common->xtal_good_time;
 	if (common->priv->device_model == RSI_DEV_9116) {
 		/*
 		 * In 9116_feature_bitmap, BITS(3:0) are used for module type

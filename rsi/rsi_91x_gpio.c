@@ -97,7 +97,7 @@ EXPORT_SYMBOL_GPL(gpio_init);
  */
 void set_host_status(int value, struct rsi_common *common)
 {
-	__gpio_set_value(common->ulp_gpio_write, value);
+	gpio_set_value(common->ulp_gpio_write, value);
 }
 EXPORT_SYMBOL_GPL(set_host_status);
 
@@ -109,7 +109,7 @@ EXPORT_SYMBOL_GPL(set_host_status);
  */
 int get_device_status(struct rsi_common *common)
 {
-	return __gpio_get_value(common->ulp_gpio_read);
+	return gpio_get_value(common->ulp_gpio_read);
 }
 EXPORT_SYMBOL_GPL(get_device_status);
 
