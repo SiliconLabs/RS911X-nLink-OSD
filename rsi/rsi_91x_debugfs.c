@@ -1085,8 +1085,10 @@ static ssize_t rsi_set_bgscan_ssid(struct file *file,
 			"The ssid should be <= to 32 characters\n");
 		return -EINVAL;
 	}
-	memcpy(common->bgscan_ssid, user_buff, common->bgscan_ssid_len);
-	return count;
+	total_bytes = simple_write_to_buffer(common->bgscan_ssid,
+					     count,
+					     ppos, user_buff, count);
+	return total_bytes;
 }
 
 static int rsi_read_bgscan_ssid(struct seq_file *file, void *data)
