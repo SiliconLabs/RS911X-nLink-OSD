@@ -574,6 +574,112 @@ static ssize_t rsi_bgscan_write(struct file *file,
 	return total_bytes;
 }
 
+static int rsi_bgscan_config_read_params(struct seq_file *file, void *data)
+{
+	struct rsi_common *common = file->private;
+
+	seq_printf(file, "%d %d %d %d %d %d\n",
+		   common->bgscan_info.bgscan_threshold,
+		   common->bgscan_info.roam_threshold,
+		   common->bgscan_info.bgscan_periodicity,
+		   common->bgscan_info.active_scan_duration,
+		   common->bgscan_info.passive_scan_duration,
+		   common->bgscan_info.two_probe);
+	seq_puts(file, "\n");
+
+	return 0;
+}
+
+static int rsi_bgscan_config_read(struct inode *inode, struct file *file)
+{
+	return single_open(file, rsi_bgscan_config_read_params,
+			inode->i_private);
+}
+
+static ssize_t rsi_bgscan_config_write(struct file *file,
+				const char __user *user_buff,
+				size_t count,
+				loff_t *ppos)
+
+{
+	struct rsi_common *common = file->f_inode->i_private;
+	int bgscan_vals[6] = { 0 };
+	int ret;
+	int total_bytes;
+	char *bgscan_buf = kmalloc(count + 1, GFP_KERNEL);
+
+	if (!common) {
+		rsi_dbg(ERR_ZONE, "No Interface\n");
+		return -ENODEV;
+	}
+
+	total_bytes = simple_write_to_buffer(bgscan_buf,
+					     count,
+					     ppos, user_buff, count);
+	if (total_bytes < 1)
+		return -EINVAL;
+
+	/* make sure that buf is null terminated */
+	bgscan_buf[count] = '\0';
+
+	ret = sscanf(bgscan_buf, "%d %d %d %d %d %d", &bgscan_vals[0],
+		&bgscan_vals[1],
+		&bgscan_vals[2],
+		&bgscan_vals[3],
+		&bgscan_vals[4],
+		&bgscan_vals[5]);
+
+	if (ret != 6) {
+		rsi_dbg(ERR_ZONE, "Invalid number of parameters\n");
+		rsi_dbg(ERR_ZONE, "Usage: <bgscan_threshold>");
+		rsi_dbg(ERR_ZONE, "<rssi_tolerance_threshold> <periodicity>");
+		rsi_dbg(ERR_ZONE, "<active_scan_duration> <passive_scan_duration> <two_probe_enable>\n");
+		return -EINVAL;
+	}
+
+	if ((bgscan_vals[0] < 0) ||
+			(bgscan_vals[1] < 0) ||
+			(bgscan_vals[2] < 0)) {
+		rsi_dbg(ERR_ZONE, "Bg scan arguments can't be negative vals\n");
+		return -EINVAL;
+	}
+	if ((bgscan_vals[3] > 255) || (bgscan_vals[3] <= 0)) {
+		rsi_dbg(ERR_ZONE, "Active scan duration should be greater than 0 and less than 256\n");
+		return -EINVAL;
+	}
+
+	if ((bgscan_vals[4] > 255) || (bgscan_vals[4] <= 0)) {
+		rsi_dbg(ERR_ZONE, "Passive scan duration should be greater than 0 and less than 256\n");
+		return -EINVAL;
+	}
+	if ((bgscan_vals[5] != 1) && (bgscan_vals[5] != 0)) {
+		rsi_dbg(ERR_ZONE, "value for two_probe is either 0 or 1\n");
+		return -EINVAL;
+	}
+
+	common->bgscan_info.bgscan_threshold = bgscan_vals[0];
+	common->bgscan_info.roam_threshold = bgscan_vals[1];
+	common->bgscan_info.bgscan_periodicity = bgscan_vals[2];
+	common->bgscan_info.active_scan_duration = bgscan_vals[3];
+	common->bgscan_info.passive_scan_duration = bgscan_vals[4];
+	common->bgscan_info.two_probe = bgscan_vals[5];
+
+	rsi_dbg(INFO_ZONE,
+		"bgscan_count = %d, roam_count = %d, periodicity = %d\n",
+		common->bgscan_info.bgscan_threshold,
+		common->bgscan_info.roam_threshold,
+		common->bgscan_info.bgscan_periodicity);
+	rsi_dbg(INFO_ZONE,
+		"active_scan_dur = %d, passive_scan_dur = %d, two_probe = %d\n",
+		common->bgscan_info.active_scan_duration,
+		common->bgscan_info.passive_scan_duration,
+		common->bgscan_info.two_probe);
+
+	rsi_dbg(INFO_ZONE, "bgscan config params updated\n");
+
+	return total_bytes;
+}
+
 #define FOPS(fopen) { \
 	.owner = THIS_MODULE, \
 	.open = (fopen), \
@@ -1109,6 +1215,8 @@ static const struct rsi_dbg_files dev_debugfs_files[] = {
 	{"stats", 0644, FOPS(rsi_stats_open),},
 	{"debug_zone", 0666, FOPS_RW(rsi_debug_read, rsi_debug_zone_write),},
 	{"bgscan", 0666, FOPS_RW(rsi_bgscan_read, rsi_bgscan_write),},
+	{"bgscan_config", 0666, FOPS_RW(rsi_bgscan_config_read,
+				rsi_bgscan_config_write),},
 	{"ps_params", 0666, FOPS_RW(rsi_read_ps_params, rsi_write_ps_params),},
 	{"bgscan_ssid", 0666, FOPS_RW(rsi_get_bgscan_ssid,
 				      rsi_set_bgscan_ssid),},
