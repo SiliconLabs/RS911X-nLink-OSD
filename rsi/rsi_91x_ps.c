@@ -181,17 +181,22 @@ void rsi_conf_uapsd(struct rsi_hw *adapter)
 int rsi_handle_ps_confirm(struct rsi_hw *adapter, u8 *msg)
 {
 	u16 cfm_type = 0;
+	unsigned long flags;
 
 	cfm_type = *(u16 *)&msg[PS_CONFIRM_INDEX];
 
 	switch (cfm_type) {
 	case SLEEP_REQUEST:
+		spin_lock_irqsave(&adapter->ps_lock, flags);
 		if (adapter->ps_state == PS_ENABLE_REQ_SENT)
 			rsi_modify_ps_state(adapter, PS_ENABLED);
+		spin_unlock_irqrestore(&adapter->ps_lock, flags);
 		break;
 	case WAKEUP_REQUEST:
+		spin_lock_irqsave(&adapter->ps_lock, flags);
 		if (adapter->ps_state == PS_DISABLE_REQ_SENT)
 			rsi_modify_ps_state(adapter, PS_NONE);
+		spin_unlock_irqrestore(&adapter->ps_lock, flags);
 		break;
 	default:
 		rsi_dbg(ERR_ZONE,

@@ -1044,6 +1044,7 @@ static ssize_t rsi_write_ps_params(struct file *file,
 	int total_bytes, cnt = 0;
 	int bytes_read = 0, t_bytes, ret = 0;
 	char *ps_param_buf = kmalloc(count + 1, GFP_KERNEL);
+	unsigned long flags;
 
 	if (!ps_param_buf)
 		return -ENOMEM;
@@ -1067,8 +1068,10 @@ static ssize_t rsi_write_ps_params(struct file *file,
 	kfree(ps_param_buf);
 	if (rsi_validate_ps_params(common, ps_params_vals))
 		return -EINVAL;
+	spin_lock_irqsave(&adapter->ps_lock, flags);
 	if (adapter->ps_state == PS_ENABLED)
 		rsi_enable_ps(adapter);
+	spin_unlock_irqrestore(&adapter->ps_lock, flags);
 	return total_bytes;
 }
 

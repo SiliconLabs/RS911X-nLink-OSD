@@ -682,6 +682,7 @@ static void rsi_mac80211_tx(struct ieee80211_hw *hw,
 	struct ieee80211_hdr *wlh = (struct ieee80211_hdr *)skb->data;
 	struct ieee80211_vif *vif = adapter->vifs[adapter->sc_nvifs - 1];
 	struct ieee80211_bss_conf *bss = &adapter->vifs[0]->bss_conf;
+	unsigned long flags;
 
 	if (rsi_validate_mac_addr(common, wlh->addr2)) {
 		ieee80211_free_txskb(common->priv->hw, skb);
@@ -698,9 +699,11 @@ static void rsi_mac80211_tx(struct ieee80211_hw *hw,
 		ieee80211_free_txskb(common->priv->hw, skb);
 		return;
 	}
+	spin_lock_irqsave(&adapter->ps_lock, flags);
 	if (((!bss->assoc) || (vif->type == NL80211_IFTYPE_AP)) &&
 	    (adapter->ps_state == PS_ENABLED))
 		rsi_disable_ps(adapter);
+	spin_unlock_irqrestore(&adapter->ps_lock, flags);
 
 #if defined(CONFIG_RSI_BT_ALONE) && !defined(CONFIG_RSI_COEX_MODE)
         ieee80211_free_txskb(common->priv->hw, skb); 
@@ -747,6 +750,7 @@ static void rsi_mac80211_stop(struct ieee80211_hw *hw)
 {
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
+	unsigned long flags;
 	
 	rsi_dbg(ERR_ZONE, "<==== Interface DOWN ====>\n");
 
@@ -770,7 +774,9 @@ static void rsi_mac80211_stop(struct ieee80211_hw *hw)
 	
 	mutex_unlock(&common->mutex);
 	/* Let the device be in power save, even if the interface is down.*/
+	spin_lock_irqsave(&adapter->ps_lock, flags);
 	rsi_enable_ps(adapter);
+	spin_unlock_irqrestore(&adapter->ps_lock, flags);
 }
 
 /**
@@ -976,6 +982,7 @@ static int rsi_mac80211_change_interface(struct ieee80211_hw *hw,
 	struct vif_priv *vif_info = (struct vif_priv *)vif->drv_priv;
 	int status = 0;
 	enum opmode intf_mode;
+	unsigned long flags;
 
 	rsi_dbg(INFO_ZONE,
 		"Change Interface: New_type = %d, New_p2p = %d\n",
@@ -988,8 +995,10 @@ static int rsi_mac80211_change_interface(struct ieee80211_hw *hw,
 	
 	switch (newtype) {
 		case NL80211_IFTYPE_AP:
+			spin_lock_irqsave(&adapter->ps_lock, flags);
 			if (adapter->ps_state == PS_ENABLED)
 				rsi_disable_ps(adapter);
+			spin_unlock_irqrestore(&adapter->ps_lock, flags);
 			rsi_dbg(INFO_ZONE, "Change to AP Mode\n");
 			intf_mode = AP_OPMODE;
 			break;
@@ -1185,8 +1194,12 @@ static int rsi_mac80211_config(struct ieee80211_hw *hw,
 
 	/* channel */
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&adapter->ps_lock, flags);
 		if (!bss->assoc && (adapter->ps_state == PS_ENABLED))
 			rsi_disable_ps(adapter);
+		spin_unlock_irqrestore(&adapter->ps_lock, flags);
 		status = rsi_channel_change(hw);
 	}
 
@@ -2773,10 +2786,13 @@ static int rsi_mac80211_suspend(struct ieee80211_hw *hw,
 #ifdef CONFIG_RSI_WOW
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
+	unbsigned long flags;
 
 	mutex_lock(&common->mutex);
+	spin_lock_irqsave(&adapter->ps_lock, flags);
 	if ((common->coex_mode > 1) && (adapter->ps_state == PS_ENABLED))
 		rsi_disable_ps(adapter);
+	spin_unlock_irqrestore(&adapter->ps_lock, flags);
 
 	if (rsi_config_wowlan(adapter, wowlan)) {
 		rsi_dbg(ERR_ZONE, "Failed to configure WoWLAN\n");
@@ -3116,6 +3132,7 @@ int rsi_mac80211_attach(struct rsi_common *common)
 	struct wiphy *wiphy = NULL;
 	struct rsi_hw *adapter = common->priv;
 	u8 addr_mask[ETH_ALEN] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x3};
+	unsigned long flags;
 
 	rsi_dbg(INIT_ZONE, "%s: Performing mac80211 attach\n", __func__);
 
@@ -3257,6 +3274,8 @@ int rsi_mac80211_attach(struct rsi_common *common)
 	/* Interface is just enabled, if nothing(station or AP) is running
 	 * on this wifi interface, better let it be in power save mode.
 	 */
+	spin_lock_irqsave(&adapter->ps_lock, flags);
 	rsi_enable_ps(adapter);
+	spin_unlock_irqrestore(&adapter->ps_lock, flags);
 	return rsi_init_dbgfs(adapter);
 }
