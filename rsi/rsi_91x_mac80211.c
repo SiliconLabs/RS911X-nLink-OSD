@@ -1690,7 +1690,6 @@ static int rsi_mac80211_set_key(struct ieee80211_hw *hw,
 			memcpy(vif_info->rx_bcmc_pn_prev, vif_info->rx_bcmc_pn,
 				IEEE80211_CCMP_PN_LEN);
 		}
-		memset(key, 0, sizeof(struct ieee80211_key_conf));
 		memset(vif_info->rx_bcmc_pn, 0, IEEE80211_CCMP_PN_LEN);
 		vif_info->rx_pn_valid = false;
 		vif_info->key = NULL;
