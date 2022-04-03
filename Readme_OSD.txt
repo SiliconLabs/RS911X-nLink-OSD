@@ -1,3 +1,14 @@
+Incompatible license headers
+============================
+
+The licnese headers on these files are incompatible with the GPL, but the code uses 2 macros that indicate the license is GPL.
+
+MODULE_LICENSE("Dual BSD/GPL");
+EXPORT_SYMBOL_GPL
+
+The header on these source files claims some kind of Silicon labs license that is not compatible with the GPL. Please fix the headers on these files to make the header compatible with the GPL or remove the GPL exports.
+
+
 This software package contains following folders/files :
 
 Package
