@@ -3802,6 +3802,7 @@ int rsi_handle_card_ready(struct rsi_common *common, u8 *msg)
  */
 int rsi_send_ack_for_ulp_entry(struct rsi_common *common)
 {
+  int status;
   struct rsi_ulp_params *ulp_params;
   struct sk_buff *skb;
 
@@ -3815,7 +3816,9 @@ int rsi_send_ack_for_ulp_entry(struct rsi_common *common)
   ulp_params->desc_word[7] = cpu_to_le16(ULP_SLEEP_NOTIFY << 8);
   skb_put(skb, sizeof(struct rsi_ulp_params));
   common->ulp_sleep_ack_sent = true;
-  return common->priv->host_intf_ops->write_pkt(common->priv, skb->data, skb->len);
+  status = common->priv->host_intf_ops->write_pkt(common->priv, skb->data, skb->len);
+  dev_kfree_skb(skb);
+  return status;
 }
 EXPORT_SYMBOL_GPL(rsi_send_ack_for_ulp_entry);
 
