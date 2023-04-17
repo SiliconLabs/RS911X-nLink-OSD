@@ -28,9 +28,11 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #*/
 
-SUPP_DIR=$(PWD)/supplicant
+ROOT_DIR:=$(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
+
+SUPP_DIR=$(ROOT_DIR)/supplicant
 KERNELRELEASE=$(shell uname -r)
-KERNELDIR=/lib/modules/$(KERNELRELEASE)/build
+KERNELDIR?=/lib/modules/$(KERNELRELEASE)/build
 
 # uncomment below line for Caracalla board
 #CONFIG_CARACALLA_BOARD=y
@@ -90,7 +92,7 @@ mac80211 will do scan
 OFFLOAD_SCAN_TO_DEVICE=y
 
 EXTRA_CFLAGS += -DLINUX -Wimplicit -Wstrict-prototypes -Wall -Werror
-EXTRA_CFLAGS += -I$(PWD)/include
+EXTRA_CFLAGS += -I$(ROOT_DIR)/include
 EXTRA_CFLAGS += -DCONFIG_RSI_DEBUGFS
 
 COMMON_SDIO_OBJS += rsi_91x_sdio_ops.o rsi_91x_sdio.o
@@ -197,12 +199,12 @@ rsi_91x-objs := $(RSI_91X_OBJS)
 
 all:
 	@echo -e "\033[32mCompiling RSI drivers...\033[0m"
-	make -C$(KERNELDIR)/ M=$(PWD) modules
+	make -C$(KERNELDIR)/ M=$(ROOT_DIR) modules
 	@echo -e "application compilation"
-	make CC="$(CC)" ROOT_DIR=$(ROOT_DIR) -C $(PWD)/apps
+	make CC="$(CC)" -C $(ROOT_DIR)/apps
 
 clean:
-	make -C$(KERNELDIR)/ M=$(PWD) clean
+	make -C$(KERNELDIR)/ M=$(ROOT_DIR) clean
 	@find . -name 'receive' | xargs rm -rf
 	@find . -name 'bt_util' | xargs rm -rf
 	@find . -name 'onebox_util' | xargs rm -rf
