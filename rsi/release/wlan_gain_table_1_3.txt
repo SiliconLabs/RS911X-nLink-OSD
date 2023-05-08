@@ -1,0 +1,143 @@
+//!************************************************************
+//! INSTRUCTIONS SHOULD BE FOLLOWED TO EDIT BELOW GAIN TABLES:
+//!************************************************************
+//! 1. Each value should be seperated by ',' and space characters.
+//! 2. Multi-line comments not supported. (Eg. /* comment */)
+//! 3. A space before comment is needed, for in-line comments. (Eg. <Data> //<Comment>)
+//! 4. Hexa-decimal numbers not supported.
+//! 5. No space between value and ',' character.
+//! 6. Table with size more than 340 bytes is not supported.
+//! 7. Supported table names and their maximum supported size are
+//!     For 2GHz 20MHz --- _RS9116_HP_MODE_REGION_BASED_RATE_VS_MAXPOWER_SINGLE_BAND_NONHPM		MAX_LENGTH = 340
+//!     For 5GHz 20MHz --- _RS9113_RS8111_5G_HP_MODE_REGION_BASED_RATE_VS_MAXPOWER_NONHPM		MAX_LENGTH = 256
+//!    NOTE: No support for other table names.
+//! 8. Gain table Format:
+//!    
+//!    <TABLE NAME>[] = { //<COMMENTS if any>
+//!    <NO.of Regions>,
+//!        <REGION NAME 1>, <NO.OF CHANNELS IN THIS REGION>,
+//!            <CHANNEL NUMBER 1>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!            <CHANNEL NUMBER 2>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!            .
+//!            .
+//!            <CHANNEL NUMBER m-1>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!            <CHANNEL NUMBER m>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!        <REGION NAME 2>, <NO.OF CHANNELS IN THIS REGION>,
+//!            <CHANNEL NUMBER 1>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!            <CHANNEL NUMBER 2>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!            .
+//!            .
+//!            <CHANNEL NUMBER m-1>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!            <CHANNEL NUMBER m>, <MAX POWER FOR b RATE>, <MAX POWER FOR g RATE>, <MAX POWER FOR n RATE>, 
+//!        <REGION NAME 3>, <NO.OF CHANNELS IN THIS REGION>,
+//!        .
+//!        .
+//!        <REGION NAME y>, <NO.OF CHANNELS IN THIS REGION>,
+//!    }; //<COMMENTS if any>
+//! 9. Supported Region names:
+//!     FCC, ETSI, TELEC, KCC
+//!
+
+// "*********Silicon Labs RSIA7 PCB antenna*********"
+//Antenna gain - 2.4GHz : 0.71dBi
+//Antenna gain -  5GHz  : 1.25dBi
+
+_RS9116_HP_MODE_REGION_BASED_RATE_VS_MAXPOWER_SINGLE_BAND_NONHPM[] = {
+3, //NUM_OF_REGIONS
+    FCC, 13, //NUM_OF_CHANNELS
+//   rate,  11b, 11g, 11n
+        1,  32,  28,  26,
+        2,  32,  30,  28,
+        3,  32,  32,  32,
+        4,  32,  34,  34,
+        5,  32,  34,  34,
+        6,  32,  34,  34,
+        7,  32,  34,  34,
+        8,  32,  34,  34,
+        9,  32,  28,  28,
+        10, 32,  24,  24,
+        11, 32,  22,  20,
+        12, 32,  18,  18,
+        13, 32,  14,  14,
+    ETSI, 17,
+       255, 32,  32, 32,
+    TELEC, 17,
+       255, 30,  30, 30,
+};
+
+// 20MHz 5G power table for different rates and regions
+_RS9113_RS8111_5G_HP_MODE_REGION_BASED_RATE_VS_MAXPOWER_NONHPM[] = {
+3,
+FCC, 6,
+    1,  11, 11, //band 1
+    2,  11, 11, //band 2
+  100,  12, 10, //band 3
+    3,  13, 13, //band 3
+  149,  14, 13, //band 4
+    4,  14, 14, //band 4
+TELEC, 4,
+    1,  10,   9, //band 1
+    2,  11,   9, //band 2
+    3,  11,  10, //band 3
+    4,  11,  10, //band 4
+ETSI, 4,
+    1,  11,  11, //band 1
+    2,  11,  11, //band 2
+    3,  12,  12, //band 3
+    4,  12,  12, //band 4
+};
+
+
+// "*********TAOGLAS GW.71.5153 Dipole antenna*********"
+////Antenna Gain - 2.4GHz : (Straight)3.3dBi , (Bent)3.8dBi ////
+////Antenna Gain -  5GHz  : (Straight)4.9dBi , (Bent)5.5dBi ////
+
+_RS9116_HP_MODE_REGION_BASED_RATE_VS_MAXPOWER_SINGLE_BAND_NONHPM[] = {
+2, //NUM_OF_REGIONS
+    FCC, 13, //NUM_OF_CHANNELS
+//   rate,  11b, 11g, 11n
+        1,  30,  24,  18,
+        2,  30,  28,  22,
+        3,  30,  30,  26,
+        4,  30,  32,  30,
+        5,  30,  34,  34,
+        6,  30,  34,  34,
+        7,  30,  34,  34,
+        8,  30,  30,  30,
+        9,  30,  26,  26,
+        10, 30,  22,  22,
+        11, 30,  16,  14,
+        12, 32,  14,  14,
+        13, 32,  14,  14,
+    TELEC, 17,
+       255, 30,  30, 30,
+};
+
+// 20MHz 5G power table for different rates and regions
+_RS9113_RS8111_5G_HP_MODE_REGION_BASED_RATE_VS_MAXPOWER_NONHPM[] = {
+2,
+FCC, 6,
+    1,  11, 11, //band 1
+    2,  12, 11, //band 2
+  100,  12, 12, //band 3
+    3,  13, 13, //band 3
+  149,  13, 13, //band 4
+    4,  13, 13, //band 4
+TELEC, 4,
+    1,  10,   9, //band 1
+    2,  11,   9, //band 2
+    3,  11,  10, //band 3
+    4,  11,  10, //band 4
+};
+
+
+
+//Use Same TELEC Power tables(used for RSIA7/GW.71.5153) for following Antennas:
+// 1)AEM6P-100000  :  Dipole Antenna   :: 2 dBi
+// 2)AEM6P-100001  :  Dipole Antenna   :: 2 dBi
+// 3)AEEE0-000000  :  Multilayer ceramic Antenna   :: 2.13 dBi
+// 4)AEEE0-000001  :  Chip Antenna   :: 4 dBi
+// 5)AEEE0-000002  :  Chip Antenna   :: 4 dBi
+// 6)AEP6P-100006X :  PIFA Antenna   :: 3 dBi
+// 7)AEP6P-100008X :  PIFA Antenna   :: 3 dBi
+

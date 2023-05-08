@@ -1,21 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_per.c
-* @brief This file contains the functionality regarding the PER(Packet error rate) 
-* mode which is a mode of operation of Driver and software to send specialized commands 
-* to program the Hardware in different configurations so that the Hardware performance can be evaluated.
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <linux/module.h>
 #include <net/sock.h>
@@ -145,15 +131,15 @@ int rsi_send_rx_stats_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh)
   int status                        = 0;
 #endif
 
-  if (common->driver_mode == E2E_MODE) {
 #ifndef CONFIG_STA_PLUS_AP
-    struct ieee80211_vif *vif = adapter->vifs[0];
-    bool assoc                = vif && vif->bss_conf.assoc;
+  struct ieee80211_vif *vif = adapter->vifs[0];
+  bool assoc                = vif && vif->bss_conf.assoc;
 #else
-    struct ieee80211_vif *sta_vif = rsi_get_sta_vif(adapter);
-    bool assoc                    = sta_vif && sta_vif->bss_conf.assoc;
+  struct ieee80211_vif *sta_vif = rsi_get_sta_vif(adapter);
+  bool assoc                    = sta_vif && sta_vif->bss_conf.assoc;
 #endif
 
+  if (common->driver_mode == E2E_MODE) {
     if (!assoc && adapter->ps_state == PS_ENABLED)
       rsi_disable_ps(adapter);
     goto SEND_STATS_FRAME;
@@ -351,78 +337,87 @@ int do_continuous_send(struct rsi_hw *adapter)
     adapter->no_of_per_fragments--;
   } else
     length = (adapter->per_params.pkt_length > 1536) ? 1536 : adapter->per_params.pkt_length;
-  if (1) {
-    len = length + FRAME_DESC_SZ + extended_desc - 4 /* CRC */;
-#ifdef RSI_USB_INTF
-    skb = dev_alloc_skb(len + (RSI_USB_TX_HEAD_ROOM + FRAME_DESC_SZ + 64 + 26));
+  len = length + FRAME_DESC_SZ + extended_desc - 4 /* CRC */;
+  if (adapter->rsi_host_intf == RSI_HOST_INTF_USB) {
+    skb = dev_alloc_skb(
+      len
+      + (RSI_USB_TX_HEAD_ROOM + FRAME_DESC_SZ + 64 /*64 bit dword align req */ + 26 /*extended desc sz is variable*/));
     if (!skb) {
       return -1;
     }
+    skb_reserve(skb, (RSI_USB_TX_HEAD_ROOM + FRAME_DESC_SZ + 26));
+  } else {
+    skb = dev_alloc_skb(len + NET_IP_ALIGN + FRAME_DESC_SZ
+                        + 64 /*64 bit dword align req */ + 26 /*extended desc sz is variable*/);
+    if (skb && NET_IP_ALIGN)
+      skb_reserve(skb, NET_IP_ALIGN);
     skb_reserve(skb, (FRAME_DESC_SZ + 26 + 64));
-#else
-    skb                           = dev_alloc_skb(len + NET_IP_ALIGN + FRAME_DESC_SZ + 64);
-    if (skb && NET_IP_ALIGN) {
-      skb_reserve(skb, (FRAME_DESC_SZ + 26 + 64));
-#endif
   }
   skb->data             = skb_put(skb, len);
   dword_align_req_bytes = ((unsigned long)skb->data & 0x3f);
+  if (dword_align_req_bytes > skb_headroom(skb)) {
+    rsi_dbg(ERR_ZONE,
+            "%s:  ERROR: Not Enough Head room: headroom = %d, len = %d\n",
+            __func__,
+            skb_headroom(skb),
+            dword_align_req_bytes);
+    dump_stack();
+  }
   skb_push(skb, dword_align_req_bytes);
   skb_trim(skb, skb->len - dword_align_req_bytes);
   prepare_per_pkt(adapter, skb);
-}
 
-if (adapter->rsi_host_intf == RSI_HOST_INTF_SDIO) {
-  status = adapter->host_intf_ops->reg_read(adapter, RSI_DEVICE_BUFFER_STATUS_REGISTER, &sdio_buf_status);
-  if (status) {
+  if (adapter->rsi_host_intf == RSI_HOST_INTF_SDIO) {
+    status = adapter->host_intf_ops->reg_read(adapter, RSI_DEVICE_BUFFER_STATUS_REGISTER, &sdio_buf_status);
+    if (status) {
+      return -1;
+    }
+    if (sdio_buf_status & (1 << PKT_BUFF_FULL)) {
+      if (!dev->rx_info.buffer_full) {
+        dev->rx_info.buf_full_counter++;
+      }
+      dev->rx_info.buffer_full = 1;
+      return 0;
+    } else {
+      dev->rx_info.buffer_full = 0;
+    }
+  } else {
+    status = adapter->host_intf_ops->master_reg_read(adapter, adapter->usb_buffer_status_reg, &usb_buf_status, 1);
+    if (status < 0)
+      return status;
+
+    if (usb_buf_status & (1 << PKT_BUFF_FULL)) {
+      if (!dev->rx_info.buffer_full) {
+        dev->rx_info.buf_full_counter++;
+      }
+      dev->rx_info.buf_full_counter++;
+      return 0;
+    } else {
+      dev->rx_info.buffer_full = 0;
+    }
+  }
+
+  if (skb->len > (FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc)) {
+    seq_num = cpu_to_le16(*(unsigned char *)(&skb->data[FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc - 2])) >> 4;
+    seq_num = ((seq_num + 1) % 4096);
+    skb->data[FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc - 2] = (seq_num << 4) & 0xff;
+    skb->data[FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc - 1] = ((seq_num << 4) >> 8);
+  }
+  if (adapter->per_packet.enable)
+    memcpy(&skb->data[FRAME_DESC_SZ + extended_desc],
+           &adapter->per_packet.packet[0],
+           ((adapter->per_packet.length) > adapter->per_params.pkt_length) ? (adapter->per_params.pkt_length)
+                                                                           : (adapter->per_packet.length));
+
+  skb->data[1] |= BIT(7); // Immediate wakeup bit
+  rsi_hex_dump(INT_MGMT_ZONE, "DO_CONTI", skb->data, skb->len);
+  status = rsi_send_pkt(adapter->priv, skb);
+  if (status < 0) {
+    rsi_dbg(ERR_ZONE, "Failed to write the packet\n");
     return -1;
   }
-  if (sdio_buf_status & (1 << PKT_BUFF_FULL)) {
-    if (!dev->rx_info.buffer_full) {
-      dev->rx_info.buf_full_counter++;
-    }
-    dev->rx_info.buffer_full = 1;
-    return 0;
-  } else {
-    dev->rx_info.buffer_full = 0;
-  }
-} else {
-  status = adapter->host_intf_ops->master_reg_read(adapter, adapter->usb_buffer_status_reg, &usb_buf_status, 1);
-  if (status < 0)
-    return status;
-
-  if (usb_buf_status & (1 << PKT_BUFF_FULL)) {
-    if (!dev->rx_info.buffer_full) {
-      dev->rx_info.buf_full_counter++;
-    }
-    dev->rx_info.buf_full_counter++;
-    return 0;
-  } else {
-    dev->rx_info.buffer_full = 0;
-  }
-}
-
-if (skb->len > (FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc)) {
-  seq_num = cpu_to_le16(*(unsigned char *)(&skb->data[FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc - 2])) >> 4;
-  seq_num = ((seq_num + 1) % 4096);
-  skb->data[FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc - 2] = (seq_num << 4) & 0xff;
-  skb->data[FRAME_DESC_SZ + MIN_802_11_HDR_LEN + extended_desc - 1] = ((seq_num << 4) >> 8);
-}
-if (adapter->per_packet.enable)
-  memcpy(&skb->data[FRAME_DESC_SZ + extended_desc],
-         &adapter->per_packet.packet[0],
-         ((adapter->per_packet.length) > adapter->per_params.pkt_length) ? (adapter->per_params.pkt_length)
-                                                                         : (adapter->per_packet.length));
-
-skb->data[1] |= BIT(7); // Immediate wakeup bit
-rsi_hex_dump(INT_MGMT_ZONE, "DO_CONTI", skb->data, skb->len);
-status = rsi_send_pkt(adapter->priv, skb);
-if (status < 0) {
-  rsi_dbg(ERR_ZONE, "Failed to write the packet\n");
-  return -1;
-}
-adapter->total_per_pkt_sent++;
-return 0;
+  adapter->total_per_pkt_sent++;
+  return 0;
 }
 
 int send_per_frame(struct rsi_hw *adapter, unsigned char mode)
@@ -544,8 +539,8 @@ SEND_PER_CMD:
       adapter->tx_running = CONTINUOUS_RUNNING; //indicating PER_CONT_MODE
     }
 
+    send_per_frame(adapter, adapter->per_params.mode);
     if (adapter->per_params.mode == PER_BURST_MODE) {
-      send_per_frame(adapter, PER_BURST_MODE);
       if (adapter->per_params.aggr_enable == 1) {
         send_per_ampdu_indication_frame(common);
         common->fsm_state = FSM_AMPDU_IND_SENT;

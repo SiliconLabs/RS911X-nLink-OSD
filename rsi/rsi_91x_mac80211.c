@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_mac80211.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <linux/etherdevice.h>
 #include <linux/if.h>
@@ -178,8 +166,8 @@ struct ieee80211_rate rsi_rates[12] = {
   { .bitrate = STD_RATE_48 * 5, .hw_value = RSI_RATE_48 },   { .bitrate = STD_RATE_54 * 5, .hw_value = RSI_RATE_54 },
 };
 
-const u16 rsi_mcsrates[8] = { RSI_RATE_MCS0, RSI_RATE_MCS1, RSI_RATE_MCS2, RSI_RATE_MCS3,
-                              RSI_RATE_MCS4, RSI_RATE_MCS5, RSI_RATE_MCS6, RSI_RATE_MCS7 };
+u16 rsi_mcsrates[8] = { RSI_RATE_MCS0, RSI_RATE_MCS1, RSI_RATE_MCS2, RSI_RATE_MCS3,
+                        RSI_RATE_MCS4, RSI_RATE_MCS5, RSI_RATE_MCS6, RSI_RATE_MCS7 };
 
 static const u32 rsi_max_ap_stas[16] = {
   32, /* 1 - Wi-Fi alone */
@@ -409,9 +397,6 @@ static void rsi_register_rates_channels(struct rsi_hw *adapter, int band)
     sbands->bitrates   = rsi_rates;
     sbands->n_bitrates = ARRAY_SIZE(rsi_rates);
     sbands->ht_cap.cap = (IEEE80211_HT_CAP_SGI_20 | ENABLE_RX_STBC);
-    if (common->enable_40mhz_in_2g) {
-      sbands->ht_cap.cap |= (IEEE80211_HT_CAP_SUP_WIDTH_20_40 | IEEE80211_HT_CAP_SGI_40 | ENABLE_RX_STBC);
-    }
   } else {
     channels = kzalloc(sizeof(rsi_5ghz_channels), GFP_KERNEL);
     memcpy(channels, rsi_5ghz_channels, sizeof(rsi_5ghz_channels));
@@ -419,8 +404,10 @@ static void rsi_register_rates_channels(struct rsi_hw *adapter, int band)
     sbands->n_channels = ARRAY_SIZE(rsi_5ghz_channels);
     sbands->bitrates   = &rsi_rates[4];
     sbands->n_bitrates = ARRAY_SIZE(rsi_rates) - 4;
-    sbands->ht_cap.cap =
-      (IEEE80211_HT_CAP_SUP_WIDTH_20_40 | IEEE80211_HT_CAP_SGI_20 | IEEE80211_HT_CAP_SGI_40 | ENABLE_RX_STBC);
+    sbands->ht_cap.cap = (IEEE80211_HT_CAP_SGI_20 | ENABLE_RX_STBC);
+    if (common->enable_40mhz) {
+      sbands->ht_cap.cap |= (IEEE80211_HT_CAP_SUP_WIDTH_20_40 | IEEE80211_HT_CAP_SGI_40 | ENABLE_RX_STBC);
+    }
   }
 
   sbands->channels              = channels;
@@ -596,7 +583,11 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
 
     /* Wait for EAPOL4 completion before starting bg scan */
     if ((bss->assoc_capability & BIT(4))) {
+#ifndef CONFIG_STA_PLUS_AP
       if (!common->start_bgscan) {
+#else
+      if (!common->start_bgscan && common->vap_mode != CONCURRENT) {
+#endif
         mutex_unlock(&common->mutex);
         return -EBUSY;
       }
@@ -621,6 +612,10 @@ static int rsi_mac80211_hw_scan_start(struct ieee80211_hw *hw,
     for (ii = 0; ii < scan_req->n_channels; ii++) {
       common->bgscan_info.user_channels[ii] = scan_req->channels[ii]->hw_value;
     }
+
+    if (common->efuse_map.module_type == ACX_MODULE)
+      update_bgscan_channel_for_acx_module(common);
+
     common->hwscan_en = true;
     if (!rsi_send_bgscan_params(common, 1)) {
       mutex_lock(&common->bgscan_lock);
@@ -780,28 +775,51 @@ void rsi_indicate_tx_status(struct rsi_hw *adapter, struct sk_buff *skb, int sta
  */
 static void rsi_mac80211_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control, struct sk_buff *skb)
 {
-  struct rsi_hw *adapter    = hw->priv;
-  struct rsi_common *common = adapter->priv;
-  struct ieee80211_hdr *wlh = (struct ieee80211_hdr *)skb->data;
-#ifdef CONFIG_STA_PLUS_AP
-  struct ieee80211_vif *vif      = rsi_get_vif(adapter, wlh->addr2);
+  struct rsi_hw *adapter         = hw->priv;
+  struct rsi_common *common      = adapter->priv;
+  struct ieee80211_hdr *wlh      = NULL;
+  struct ieee80211_tx_info *info = NULL;
+  struct skb_info *tx_params     = NULL;
+  struct ethhdr *ehdr            = NULL;
+  struct ieee80211_vif *vif      = NULL;
   struct ieee80211_bss_conf *bss = NULL;
+
+  info      = IEEE80211_SKB_CB(skb);
+  tx_params = (struct skb_info *)info->driver_data;
+  wlh       = (struct ieee80211_hdr *)skb->data;
+  ehdr      = (struct ethhdr *)skb->data;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 9, 16))
+  if ((info->control.flags & IEEE80211_TX_CTRL_HW_80211_ENCAP))
+    tx_params->flags |= ENCAP_OFFLOAD_EN;
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+  if (info->flags & IEEE80211_TX_CTL_HW_80211_ENCAP)
+    tx_params->flags |= ENCAP_OFFLOAD_EN;
+#endif
+#ifdef CONFIG_STA_PLUS_AP
+  if (tx_params->flags & ENCAP_OFFLOAD_EN)
+    vif = rsi_get_vif(adapter, ehdr->h_source);
+  else
+    vif = rsi_get_vif(adapter, wlh->addr2);
 #else
-  struct ieee80211_vif *vif = adapter->vifs[adapter->sc_nvifs - 1];
-  struct ieee80211_bss_conf *bss = &adapter->vifs[0]->bss_conf;
+  vif = adapter->vifs[adapter->sc_nvifs - 1];
 #endif
 
-#ifdef CONFIG_STA_PLUS_AP
   if (!vif) {
     rsi_dbg(ERR_ZONE, "%s: vif is NULL\n", __func__);
     ieee80211_free_txskb(common->priv->hw, skb);
     return;
   }
   bss = &vif->bss_conf;
-#endif
-  if (rsi_validate_mac_addr(common, wlh->addr2)) {
-    ieee80211_free_txskb(common->priv->hw, skb);
-    return;
+
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+    if (rsi_validate_mac_addr(common, wlh->addr2)) {
+      ieee80211_free_txskb(common->priv->hw, skb);
+      return;
+    }
+    if (ieee80211_is_beacon(wlh->frame_control)) {
+      ieee80211_free_txskb(common->priv->hw, skb);
+      return;
+    }
   }
 
 #ifdef CONFIG_RSI_WOW
@@ -810,10 +828,6 @@ static void rsi_mac80211_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control
     return;
   }
 #endif
-  if (ieee80211_is_beacon(wlh->frame_control)) {
-    ieee80211_free_txskb(common->priv->hw, skb);
-    return;
-  }
   if (((!bss->assoc) || (vif->type == NL80211_IFTYPE_AP)) && (adapter->ps_state == PS_ENABLED))
     rsi_disable_ps(adapter);
 
@@ -889,7 +903,7 @@ static void rsi_mac80211_stop(struct ieee80211_hw *hw)
 
   mutex_unlock(&common->mutex);
   /* Let the device be in power save, even if the interface is down.*/
-  if (!adapter->rx_stats_inprog)
+  if (common->default_deep_sleep_enable && !adapter->rx_stats_inprog)
     rsi_enable_ps(adapter);
 }
 
@@ -948,6 +962,13 @@ static int rsi_mac80211_add_interface(struct ieee80211_hw *hw, struct ieee80211_
     case NL80211_IFTYPE_STATION:
       rsi_dbg(INFO_ZONE, "Station Mode");
       intf_mode = STA_OPMODE;
+      if (common->enable_encap_offload) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 9, 16))
+        ieee80211_set_hw_80211_encap(vif, true);
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+        vif->offload_flags = IEEE80211_OFFLOAD_ENCAP_ENABLED;
+#endif
+      }
       break;
     case NL80211_IFTYPE_AP:
       rsi_dbg(INFO_ZONE, "AP Mode");
@@ -1262,6 +1283,7 @@ static int rsi_channel_change(struct ieee80211_hw *hw)
     common->ap_channel = curchan;
     return 0;
   }
+  common->ap_channel           = curchan;
   common->mac80211_cur_channel = channel;
   if (bss->assoc) {
     rsi_dbg(INFO_ZONE, "%s: connected\n", __func__);
@@ -1534,6 +1556,7 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
   struct ieee80211_conf *conf    = &hw->conf;
   u16 rx_filter_word             = 0;
   u8 addr[ETH_ALEN] = { 0 };
+  u8 basic_rate;
 
   rsi_dbg(INFO_ZONE, "%s: BSS status changed; changed=%08x\n", __func__, changed);
 
@@ -1542,6 +1565,14 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 
   mutex_lock(&common->mutex);
 
+  if ((changed & BSS_CHANGED_BSSID) && (changed & BSS_CHANGED_BASIC_RATES)) {
+    basic_rate = ffs(vif->bss_conf.basic_rates) - 1;
+    if (common->band == NL80211_BAND_2GHZ)
+      common->minimum_basic_rate = rsi_rates[basic_rate].hw_value;
+
+    else
+      common->minimum_basic_rate = rsi_rates[basic_rate + 4].hw_value;
+  }
   if ((changed & BSS_CHANGED_ASSOC) && (vif->type == NL80211_IFTYPE_STATION)) {
     rsi_dbg(INFO_ZONE, "%s: Changed Association status: %d\n", __func__, bss_conf->assoc);
     bss->assoc = bss_conf->assoc;
@@ -1633,7 +1664,7 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
     if (common->beacon_interval != bss->beacon_int) {
       common->beacon_interval = bss->beacon_int;
       if (vif->type == NL80211_IFTYPE_AP)
-        rsi_set_vap_capabilities(common, AP_OPMODE, vif->addr, common->last_vap_id, VAP_UPDATE);
+        rsi_set_vap_capabilities(common, AP_OPMODE, vif->addr, ((struct vif_priv *)vif->drv_priv)->vap_id, VAP_UPDATE);
     }
   }
 
@@ -1909,7 +1940,6 @@ static int rsi_mac80211_set_key(struct ieee80211_hw *hw,
         vif_info->prev_keyid = vif_info->key->keyidx;
         memcpy(vif_info->rx_bcmc_pn_prev, vif_info->rx_bcmc_pn, IEEE80211_CCMP_PN_LEN);
       }
-      memset(key, 0, sizeof(struct ieee80211_key_conf));
       memset(vif_info->rx_bcmc_pn, 0, IEEE80211_CCMP_PN_LEN);
       vif_info->rx_pn_valid = false;
       vif_info->key         = NULL;
@@ -2080,6 +2110,27 @@ static int rsi_mac80211_ampdu_action(struct ieee80211_hw *hw,
   return status;
 }
 
+/**
+ * rsi_mac80211_set_frag_threshold() - This function sets fragmentation threshold value.
+ * @hw: Pointer to the ieee80211_hw structure.
+ * @value: Rts threshold value.
+ *
+ * Return: 0 on success.
+ */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 9, 16))
+static int rsi_mac80211_set_frag_threshold(struct ieee80211_hw *hw, u32 value)
+{
+  struct rsi_hw *adapter    = hw->priv;
+  struct rsi_common *common = adapter->priv;
+
+  mutex_lock(&common->mutex);
+  common->frag_threshold = value;
+  rsi_send_vap_dynamic_update(common);
+  mutex_unlock(&common->mutex);
+
+  return 0;
+}
+#endif
 /**
  * rsi_mac80211_set_rts_threshold() - This function sets rts threshold value.
  * @hw: Pointer to the ieee80211_hw structure.
@@ -2535,6 +2586,7 @@ static int rsi_mac80211_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *v
 
   mutex_lock(&common->mutex);
 
+
   if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO)) {
     u8 j;
     int free_index = -1;
@@ -2681,6 +2733,8 @@ static int rsi_mac80211_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif
   rsi_hex_dump(INFO_ZONE, "Station Removed", sta->addr, ETH_ALEN);
 
   mutex_lock(&common->mutex);
+
+
   if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO)) {
     u8 j;
 
@@ -2746,6 +2800,7 @@ static int rsi_mac80211_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif
     common->user_channels_count = 0;
 #endif
     common->send_initial_bgscan_chan = false;
+    common->update_country           = false;
     if (common->bgscan_en) {
       if (!rsi_send_bgscan_params(common, 0))
         common->bgscan_en = 0;
@@ -2851,12 +2906,11 @@ static void rsi_reg_notify(struct wiphy *wiphy, struct regulatory_request *reque
   struct rsi_hw *adapter    = hw->priv;
   struct rsi_common *common = adapter->priv;
   struct ieee80211_channel *ch;
-#ifdef CONFIG_CARACALLA_BOARD
+  struct ieee80211_bss_conf *bss = NULL;
 #ifndef CONFIG_STA_PLUS_AP
   struct ieee80211_vif *vif = adapter->vifs[adapter->sc_nvifs - 1];
 #else
   struct ieee80211_vif *vif = rsi_get_first_valid_vif(adapter);
-#endif
 #endif
   int i;
   u8 region_code;
@@ -2882,6 +2936,9 @@ static void rsi_reg_notify(struct wiphy *wiphy, struct regulatory_request *reque
 
   rsi_dbg(ERR_ZONE, "%s: Updating regulatory for region %s\n", __func__, regdfs_region_str(region_code));
 #endif
+
+  if (vif && vif->type == NL80211_IFTYPE_STATION)
+    bss = &vif->bss_conf;
 
   sband = wiphy->bands[NL80211_BAND_2GHZ];
   for (i = 0; i < sband->n_channels; i++) {
@@ -2941,6 +2998,15 @@ static void rsi_reg_notify(struct wiphy *wiphy, struct regulatory_request *reque
   adapter->dfs_region = region_code - 1;
   adapter->country[0] = request->alpha2[0];
   adapter->country[1] = request->alpha2[1];
+
+  if (bss && bss->assoc && !common->update_country) {
+#ifndef CONFIG_STA_PLUS_AP
+    rsi_set_channel(common, common->ap_channel);
+#else
+    rsi_set_channel(common, common->ap_channel, vif);
+#endif
+    common->update_country = true;
+  }
 
   mutex_unlock(&common->mutex);
 }
@@ -3330,17 +3396,20 @@ static void rsi_mac80211_event_callback(struct ieee80211_hw *hw,
 #endif
 
 static struct ieee80211_ops mac80211_ops = {
-  .tx                = rsi_mac80211_tx,
-  .start             = rsi_mac80211_start,
-  .stop              = rsi_mac80211_stop,
-  .add_interface     = rsi_mac80211_add_interface,
-  .remove_interface  = rsi_mac80211_remove_interface,
-  .change_interface  = rsi_mac80211_change_interface,
-  .config            = rsi_mac80211_config,
-  .bss_info_changed  = rsi_mac80211_bss_info_changed,
-  .conf_tx           = rsi_mac80211_conf_tx,
-  .configure_filter  = rsi_mac80211_conf_filter,
-  .set_key           = rsi_mac80211_set_key,
+  .tx               = rsi_mac80211_tx,
+  .start            = rsi_mac80211_start,
+  .stop             = rsi_mac80211_stop,
+  .add_interface    = rsi_mac80211_add_interface,
+  .remove_interface = rsi_mac80211_remove_interface,
+  .change_interface = rsi_mac80211_change_interface,
+  .config           = rsi_mac80211_config,
+  .bss_info_changed = rsi_mac80211_bss_info_changed,
+  .conf_tx          = rsi_mac80211_conf_tx,
+  .configure_filter = rsi_mac80211_conf_filter,
+  .set_key          = rsi_mac80211_set_key,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 9, 16))
+  .set_frag_threshold = rsi_mac80211_set_frag_threshold,
+#endif
   .set_rts_threshold = rsi_mac80211_set_rts_threshold,
   .set_bitrate_mask  = rsi_mac80211_set_rate_mask,
   .ampdu_action      = rsi_mac80211_ampdu_action,
@@ -3376,7 +3445,7 @@ int rsi_mac80211_attach(struct rsi_common *common)
   struct ieee80211_hw *hw = NULL;
   struct wiphy *wiphy     = NULL;
   struct rsi_hw *adapter  = common->priv;
-  u8 addr_mask[ETH_ALEN]  = { 0x0, 0x0, 0x0, 0x0, 0x0, 0x3 };
+  u8 addr_mask[ETH_ALEN]  = { 0x0, 0x0, 0x0, 0xff, 0xff, 0xff };
 
   rsi_dbg(INIT_ZONE, "%s: Performing mac80211 attach\n", __func__);
 
@@ -3407,6 +3476,13 @@ int rsi_mac80211_attach(struct rsi_common *common)
   if (common->driver_mode == SNIFFER_MODE) {
     ieee80211_hw_set(hw, RX_INCLUDES_FCS);
     ieee80211_hw_set(hw, WANT_MONITOR_VIF);
+  }
+  if (common->enable_encap_offload) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 9, 16))
+    ieee80211_hw_set(hw, SUPPORTS_TX_FRAG);
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+    ieee80211_hw_set(hw, SUPPORTS_TX_ENCAP_OFFLOAD);
+#endif
   }
 
 #else
@@ -3511,7 +3587,7 @@ int rsi_mac80211_attach(struct rsi_common *common)
   /* Interface is just enabled, if nothing(station or AP) is running
 	 * on this wifi interface, better let it be in power save mode.
 	 */
-  if (common->driver_mode == 1)
+  if (common->default_deep_sleep_enable && common->driver_mode == 1)
     rsi_enable_ps(adapter);
   return rsi_init_dbgfs(adapter);
 }

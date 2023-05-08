@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_core.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include "rsi_mgmt.h"
 #include "rsi_common.h"
@@ -436,6 +424,8 @@ void rsi_core_xmit(struct rsi_common *common, struct sk_buff *skb)
   struct ieee80211_vif *vif = NULL;
 #endif
   u8 q_num, tid = 0;
+  struct ethhdr *ehdr = (struct ethhdr *)skb->data;
+  u8 tos;
 
   if ((!skb) || (!skb->len)) {
     rsi_dbg(ERR_ZONE, "%s: Null skb/zero Length packet\n", __func__);
@@ -457,15 +447,19 @@ void rsi_core_xmit(struct rsi_common *common, struct sk_buff *skb)
   wlh       = (struct ieee80211_hdr *)&skb->data[0];
 
 #ifdef CONFIG_STA_PLUS_AP
-  vif = rsi_get_vif(adapter, wlh->addr2);
+  if (tx_params->flags & ENCAP_OFFLOAD_EN)
+    vif = rsi_get_vif(adapter, ehdr->h_source);
+  else
+    vif = rsi_get_vif(adapter, wlh->addr2);
   if (!vif) {
     rsi_dbg(ERR_ZONE, "%s: vif is NULL\n", __func__);
     goto xmit_fail;
   }
 #endif
-  if ((ieee80211_is_mgmt(wlh->frame_control)) || (ieee80211_is_ctl(wlh->frame_control))
-      || (ieee80211_is_qos_nullfunc(wlh->frame_control))) {
 
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)
+      && ((ieee80211_is_mgmt(wlh->frame_control)) || (ieee80211_is_ctl(wlh->frame_control))
+          || (ieee80211_is_qos_nullfunc(wlh->frame_control)))) {
     if ((ieee80211_is_assoc_req(wlh->frame_control)) || (ieee80211_is_reassoc_req(wlh->frame_control))) {
       struct ieee80211_bss_conf *bss = NULL;
 
@@ -505,50 +499,87 @@ void rsi_core_xmit(struct rsi_common *common, struct sk_buff *skb)
 
     /* Drop the null packets if bgscan is enabled
  		 * as it is already handled in firmware */
-    if ((vif->type == NL80211_IFTYPE_STATION) && (common->bgscan_en)) {
-      if ((ieee80211_is_qos_nullfunc(wlh->frame_control) || ieee80211_is_nullfunc(wlh->frame_control))) {
-        ++common->tx_stats.total_tx_pkt_freed[skb->priority];
-        rsi_indicate_tx_status(adapter, skb, 0);
-        return;
+    if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+      if ((vif->type == NL80211_IFTYPE_STATION) && (common->bgscan_en)) {
+        if ((ieee80211_is_qos_nullfunc(wlh->frame_control) || ieee80211_is_nullfunc(wlh->frame_control))) {
+          ++common->tx_stats.total_tx_pkt_freed[skb->priority];
+          rsi_indicate_tx_status(adapter, skb, 0);
+          return;
+        }
       }
-    }
 
-    if (ieee80211_is_data_qos(wlh->frame_control)) {
-      u8 *qos = ieee80211_get_qos_ctl(wlh);
+      if (ieee80211_is_data_qos(wlh->frame_control)) {
+        u8 *qos = ieee80211_get_qos_ctl(wlh);
 
-      tid           = *qos & IEEE80211_QOS_CTL_TID_MASK;
-      skb->priority = TID_TO_WME_AC(tid);
+        tid           = *qos & IEEE80211_QOS_CTL_TID_MASK;
+        skb->priority = TID_TO_WME_AC(tid);
+      } else {
+        tid           = IEEE80211_NONQOS_TID;
+        skb->priority = BE_Q;
+      }
     } else {
-      tid           = IEEE80211_NONQOS_TID;
-      skb->priority = BE_Q;
+      if (cpu_to_le16(*(u16 *)&skb->data[12]) == htons(ETH_P_IPV6)) {
+        tos = (u8)(ntohl(cpu_to_le16(*(u32 *)&skb->data[14])) >> 20);
+        tos >>= 5;
+      } else {
+        tos = skb->data[15] >> 5;
+      }
+      tx_params->tid = tos;
+      tid            = tx_params->tid;
+      skb->priority  = TID_TO_WME_AC(tos);
     }
+
 #ifdef CONFIG_STA_PLUS_AP
     if (vif->type == NL80211_IFTYPE_AP) {
       skb->priority += 4;
     }
 #endif
-    if ((!is_broadcast_ether_addr(wlh->addr1)) && (!is_multicast_ether_addr(wlh->addr1))) {
-      if (vif->type == NL80211_IFTYPE_AP || vif->type == NL80211_IFTYPE_P2P_GO) {
-        sta = rsi_find_sta(common, wlh->addr1);
-        if (!sta)
-          goto xmit_fail;
-        tx_params->sta_id = sta->sta_id;
-      } else if (vif->type == NL80211_IFTYPE_STATION) {
+
+    if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+      if ((!is_broadcast_ether_addr(wlh->addr1)) && (!is_multicast_ether_addr(wlh->addr1))) {
+        if (vif->type == NL80211_IFTYPE_AP || vif->type == NL80211_IFTYPE_P2P_GO) {
+          sta = rsi_find_sta(common, wlh->addr1);
+          if (!sta)
+            goto xmit_fail;
+          tx_params->sta_id = sta->sta_id;
+        } else if (vif->type == NL80211_IFTYPE_STATION) {
 #ifndef CONFIG_STA_PLUS_AP
-        sta = &common->stations[RSI_MAX_ASSOC_STAS];
+          sta = &common->stations[RSI_MAX_ASSOC_STAS];
 #else
-        sta = &common->stations[STA_PEER];
+          sta = &common->stations[STA_PEER];
 #endif
-        if (!sta)
-          goto xmit_fail;
+          if (!sta)
+            goto xmit_fail;
 #ifndef CONFIG_STA_PLUS_AP
-        tx_params->sta_id = 0;
+          tx_params->sta_id = 0;
 #else
-        tx_params->sta_id = STA_PEER;
+          tx_params->sta_id = STA_PEER;
 #endif
+        }
+      }
+    } else {
+      if ((!is_broadcast_ether_addr(ehdr->h_dest)) && (!is_multicast_ether_addr(ehdr->h_dest))) {
+        if (vif->type == NL80211_IFTYPE_AP || vif->type == NL80211_IFTYPE_P2P_GO) {
+          sta = rsi_find_sta(common, ehdr->h_dest);
+          if (!sta)
+            goto xmit_fail;
+          tx_params->sta_id = sta->sta_id;
+        } else if (vif->type == NL80211_IFTYPE_STATION) {
+#ifndef CONFIG_STA_PLUS_AP
+          sta = &common->stations[RSI_MAX_ASSOC_STAS];
+#else
+          sta = &common->stations[STA_PEER];
+#endif
+          if (!sta)
+            goto xmit_fail;
+#ifndef CONFIG_STA_PLUS_AP
+          tx_params->sta_id = 0;
+#else
+          tx_params->sta_id = STA_PEER;
+#endif
+        }
       }
     }
-
     q_num          = skb->priority;
     tx_params->tid = tid;
 
@@ -583,8 +614,9 @@ void rsi_core_xmit(struct rsi_common *common, struct sk_buff *skb)
 #endif
       tx_params->sta_id = 0;
     }
-
-    if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
+    if (((vif->type == NL80211_IFTYPE_STATION)
+         && ((skb->protocol == cpu_to_be16(ETH_P_PAE)) || (skb->protocol == cpu_to_be16(ETH_P_802_3))))
+        || ((vif->type == NL80211_IFTYPE_AP) && (skb->protocol == cpu_to_be16(ETH_P_PAE)))) {
       q_num         = MGMT_SOFT_Q;
       skb->priority = q_num;
     }

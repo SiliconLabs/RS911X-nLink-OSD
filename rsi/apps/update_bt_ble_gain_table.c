@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
+
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -199,7 +204,8 @@ int main(int argc, char *argv[])
 
   FILE *fp;
   uint_32 string_matched, i, max_check, str_indx;
-  uint_32 ret = ONEBOX_STATUS_SUCCESS, count, no_of_structs = 0, comment_decoded = 0;
+  uint_32 ret = ONEBOX_STATUS_SUCCESS, count, comment_decoded = 0;
+  int_32 no_of_structs = 0;
   uint_8 str[MAX_STRUCT_SIZE], *str_tmp, ch;
   struct structure_info {
     uint_8 name[MAX_STRUCT_SIZE];

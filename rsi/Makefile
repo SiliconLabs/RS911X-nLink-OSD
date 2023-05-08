@@ -1,32 +1,4 @@
-#/*
-# Copyright (c) 2017 Redpine Signals Inc. All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 	1. Redistributions of source code must retain the above copyright
-# 	   notice, this list of conditions and the following disclaimer.
-#
-# 	2. Redistributions in binary form must reproduce the above copyright
-# 	   notice, this list of conditions and the following disclaimer in the
-# 	   documentation and/or other materials provided with the distribution.
-#
-# 	3. Neither the name of the copyright holder nor the names of its
-# 	   contributors may be used to endorse or promote products derived from
-# 	   this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-# INTERRUPTION). HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-#*/
+# SPDX-License-Identifier: GPL-2.0-only
 
 SUPP_DIR=$(PWD)/supplicant
 KERNELRELEASE=$(shell uname -r)
@@ -83,13 +55,13 @@ also need to enabled CONFIG_RS9116_FLASH_MODE flag
 #CONFIG_RSI_LOAD_FW_FROM_FLASH_ONLY=y
 
 #Uncomment below line to ignore -84 sdio write failure error
-#COMMAND_84_ERROR_WAR=y
+COMMAND_84_ERROR_WAR=y
 
 #Uncomment below line to offload scanning to driver as kernel verion above 4.20.17 \
 mac80211 will do scan
 OFFLOAD_SCAN_TO_DEVICE=y
 
-EXTRA_CFLAGS += -DLINUX -Wimplicit -Wstrict-prototypes -Wall -Werror
+EXTRA_CFLAGS += -DLINUX -Wimplicit -Wstrict-prototypes -Wall -Werror -Wno-implicit-fallthrough
 EXTRA_CFLAGS += -I$(PWD)/include
 EXTRA_CFLAGS += -DCONFIG_RSI_DEBUGFS
 
@@ -198,8 +170,10 @@ rsi_91x-objs := $(RSI_91X_OBJS)
 all:
 	@echo -e "\033[32mCompiling RSI drivers...\033[0m"
 	make -C$(KERNELDIR)/ M=$(PWD) modules
-	@echo -e "application compilation"
+	chmod 777 start_rs9116.sh
+	chmod 777 osd_common_insert.sh
 	make CC="$(CC)" ROOT_DIR=$(ROOT_DIR) -C $(PWD)/apps
+	@echo -e "\033[32mCompilation done SUCCESSFULLY\033[0m"
 
 clean:
 	make -C$(KERNELDIR)/ M=$(PWD) clean

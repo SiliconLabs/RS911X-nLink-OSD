@@ -1,20 +1,7 @@
-/*******************************************************************************
-* @file  onebox_util.c
-* @brief This file include onebox_util application which is used to parse the user
-* command and call related function.
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <stdio.h>
 #include <sys/socket.h>
@@ -43,9 +30,22 @@ int main(int argc, char *argv[])
   struct bb_rf_param_t bb_rf_params;
   struct bb_rf_param_t bb_rf_read;
   struct efuse_content_t *efuse_content;
+  struct fltr_bcast bcast;
   int length;
   int multiple_bb_read = 0;
-
+  //_9117_CODE_START
+  int rltime_enable;
+  unsigned long int rltime_timer;
+  int tx_length, rx_length;
+#ifdef CONFIG_TWT_SUPPORT
+  int twt_status;
+  rsi_twt_user_params twt_params;
+  rsi_twt_status_resp *twt_resp = malloc(sizeof(rsi_twt_status_resp));
+#endif
+  unsigned short int bmiss_threshold_value, prev_bmiss_threshold;
+  unsigned short int keep_alive_period;
+  //_9117_CODE_END
+  short int received_rssi;
   struct nlmsghdr *nlh;
 
   if (argc < 3) {
@@ -184,6 +184,45 @@ int main(int argc, char *argv[])
         free(nlh);
       }
       break;
+    case RSI_GET_RSSI:
+      if (argc != 3) {
+        ONEBOX_PRINT("Usage: onebox_util rpine0 get_rssi\n");
+        return ONEBOX_STATUS_FAILURE;
+      }
+      if (send_get_rssi_frame_to_drv(sfd) < 0) {
+        ONEBOX_PRINT("Error while issuing get_rssi ioctl\n");
+        ret = ONEBOX_STATUS_FAILURE;
+        break;
+      } else {
+        nlh = common_recv_mesg_wrapper(sfd, 2);
+        memcpy(&received_rssi, (short int *)NLMSG_DATA(nlh), 2);
+        printf(" ***** Received RSSI is =-%d *****\n ", received_rssi);
+      }
+      break;
+    case RSI_FILTER_BCAST: {
+      if (argc != 6) {
+        ONEBOX_PRINT("Usage: onebox_util rpine0 filter_bcast beacon_drop_threshold(ms) filter_bcast_in_tim "
+                     "filter_bcast_tim_till_next_cmd\n");
+        return ONEBOX_STATUS_FAILURE;
+      }
+      bcast.beacon_drop_threshold = atoi(argv[3]);
+      bcast.filter_bcast_in_tim   = atoi(argv[4]);
+      if (bcast.filter_bcast_in_tim != 0 && bcast.filter_bcast_in_tim != 1) {
+        printf("Valid value for filter_bcast_in_tim argument is either 0 or 1\n");
+        return ONEBOX_STATUS_FAILURE;
+      }
+      bcast.filter_bcast_tim_till_next_cmd = atoi(argv[5]);
+      if (bcast.filter_bcast_tim_till_next_cmd != 0 && bcast.filter_bcast_tim_till_next_cmd != 1) {
+        printf("Valid value for filter_bcast_tim_till_next_cmd argument is either 0 or 1\n");
+        return ONEBOX_STATUS_FAILURE;
+      }
+      ret = send_filter_broadcast_frame_to_drv(bcast, sfd);
+      if (ret < 0) {
+        ONEBOX_PRINT("Error while issuing filter_bcast ioctl\n");
+        ret = ONEBOX_STATUS_FAILURE;
+      }
+      break;
+    }
     default:
       return ONEBOX_STATUS_FAILURE;
   }
@@ -195,19 +234,20 @@ int getcmdnumber(char *command, char *ifName)
 {
   if (!strcmp(command, "update_wlan_gain_table") && !strncmp(ifName, "rpine", 5)) {
     return UPDATE_WLAN_GAIN_TABLE;
-  }
-  if (!strcmp(command, "print_efuse_map") && !strncmp(ifName, "rpine", 5)) {
+  } else if (!strcmp(command, "print_efuse_map") && !strncmp(ifName, "rpine", 5)) {
     return EFUSE_MAP;
-  }
-  if (!strcmp(command, "bb_write") && !strncmp(ifName, "rpine", 5)) {
+  } else if (!strcmp(command, "bb_write") && !strncmp(ifName, "rpine", 5)) {
     return RSI_SET_BB_WRITE;
-  }
-  if (!strcmp(command, "bb_read_multiple") && !strncmp(ifName, "rpine", 5)) {
+  } else if (!strcmp(command, "bb_read_multiple") && !strncmp(ifName, "rpine", 5)) {
     return RSI_MULTIPLE_BB_READ;
-  }
-  if (!strcmp(command, "bb_read") && !strncmp(ifName, "rpine", 5)) {
+  } else if (!strcmp(command, "bb_read") && !strncmp(ifName, "rpine", 5)) {
     return RSI_SET_BB_READ;
-  } else {
+  } else if (!strcmp(command, "filter_bcast") && !strncmp(ifName, "rpine", 5)) {
+    return RSI_FILTER_BCAST;
+  } else if (!strcmp(command, "get_rssi") && !strncmp(ifName, "rpine", 5)) {
+    return RSI_GET_RSSI;
+  }
+  else {
     ONEBOX_PRINT("Error: Wrong command , Please follow usage...\n");
     usage();
     return ONEBOX_STATUS_FAILURE;
@@ -222,3 +262,4 @@ void usage()
   ONEBOX_PRINT("Usage:./onebox_util rpine0 print_efuse_map\n");
   return;
 }
+

@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_main.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -131,6 +119,14 @@ u8 antenna_sel = ANTENNA_SEL_UFL;
 u8 antenna_sel       = ANTENNA_SEL_INT;
 #endif
 /*
+ * COUNTRY Selection
+ *  0 World Domain
+ *  840 US Domain Maps to US Region
+ *  276 Germany Maps to EU Region
+ *  392 Japan Maps to Japan Region
+ */
+u16 country_code = 0;
+/*
  * LMAC BEACON DROP Feature Options
  * 0 - Disable
  * 1 - Enable
@@ -176,7 +172,7 @@ u8 ipps_valid_value  = 0;
  * 1 -Enable
  * 0 -Disable
 */
-bool enable_40mhz_in_2g;
+bool enable_40mhz;
 
 module_param(bt_rf_type, byte, S_IRUGO);
 module_param(ble_tx_pwr_inx, byte, S_IRUGO);
@@ -242,22 +238,38 @@ MODULE_PARM_DESC(antenna_sel, "\n Antenna selection. '2' for  intenal antenna \
 and '3' for External antenna\n");
 
 module_param(feature_bitmap_9116, ushort, S_IRUGO);
-MODULE_PARM_DESC(feature_bitmap_9116, "\n9116 Feature Bitmap BIT(0) 0: AGC_PD \
-Enable, 1: AGC_PD Disable BIT(7:1) Reserved\n");
+MODULE_PARM_DESC(feature_bitmap_9116, "\n9116 Feature Bitmap\n\
+BIT(0): Disable auto rate enhancements\n\
+BIT(1): 1.8V enable\n\
+BIT(2): Reserved\n\
+BIT(3): Airplane mode\n\
+BIT(4): DISABLE_AARF_RATE_BLOCKING\n\
+BIT(6:5): PTA config\n\
+BIT(7): Reserved\n");
 
+module_param(country_code, ushort, S_IRUGO);
+MODULE_PARM_DESC(country_code, "Country Code to select region");
 module_param(lmac_bcon_drop, bool, S_IRUGO);
 module_param(standby_assoc_chain_sel, bool, S_IRUGO);
 module_param(pwr_save_opt, ushort, S_IRUGO);
 module_param(driver_mode_value, byte, S_IRUGO);
 module_param(ipps_valid_value, byte, S_IRUGO);
-module_param(enable_40mhz_in_2g, bool, S_IRUGO);
-MODULE_PARM_DESC(enable_40mhz_in_2g, "\nSupport of 40Mhz in 2.4Gh\n\
+module_param(enable_40mhz, bool, S_IRUGO);
+MODULE_PARM_DESC(enable_40mhz, "\nSupport of 40Mhz in 5Ghz\n\
 '1' - Enable.\n'0' - Disable\n");
 
 u8 xtal_good_time;
 module_param(xtal_good_time, byte, S_IRUGO);
 MODULE_PARM_DESC(xtal_good_time, "\nCrystal good time value in Micro-Second\n\
 '0' - 1000 \n'1' - 2000 \n'2' - 3000 \n'3' - 600\n");
+
+u8 pta_config = 0;
+module_param(pta_config, byte, S_IRUGO);
+MODULE_PARM_DESC(pta_config, "\nPTA configuration \n\
+'0'  - PTA Disabled\n\
+'1'  - PTA_CONFIG_1\n\
+'2'  - PTA_CONFIG_2\n\
+'3'  - PTA_CONFIG_3\n");
 
 
 u16 rsi_zone_enabled = ERR_ZONE;
@@ -305,6 +317,14 @@ static struct rsi_proto_ops g_proto_ops = {
   .get_zb_context = rsi_get_zb_context,
 };
 #endif
+bool default_deep_sleep_enable;
+module_param(default_deep_sleep_enable, bool, S_IRUGO);
+MODULE_PARM_DESC(default_deep_sleep_enable, "\ndefault_deep_sleep_enable\n\
+		+'0' - Disable \n'1' - Enable\n");
+bool enable_encap_offload;
+module_param(enable_encap_offload, bool, S_IRUGO);
+MODULE_PARM_DESC(enable_encap_offload, "\nenable_encap_offload\n\
+		'0' - Disable \n'1' - Enable\n");
 
 /**
  * rsi_dbg() - This function outputs informational messages.
@@ -481,7 +501,7 @@ int rsi_read_pkt(struct rsi_common *common, u8 *rx_pkt, s32 rcv_pkt_len)
   u8 zb_pkt_type;
 #endif
 #ifndef CONFIG_STA_PLUS_AP
-  struct ieee80211_vif *vif = adapter->vifs[adapter->sc_nvifs - 1];
+  struct ieee80211_vif *vif = adapter->vifs[0];
 #else
   struct ieee80211_vif *vif = rsi_get_sta_vif(common->priv);
 #endif
@@ -661,6 +681,55 @@ void *rsi_get_zb_context(void *priv)
 }
 #endif
 
+void obm_configure_region(struct rsi_hw *adapter, u16 country_code)
+{
+
+  switch (country_code) {
+    /* Countries in US Region */
+    case CTRY_CANADA:
+    case CTRY_MEXICO:
+    case CTRY_UNITED_STATES:
+      adapter->dfs_region = 0;
+      break;
+
+      /* Countries in EU Region */
+    case CTRY_FRANCE:
+    case CTRY_GERMANY:
+    case CTRY_ITALY:
+    case CTRY_BELGIUM:
+      adapter->dfs_region = 1;
+      break;
+
+      /* Countries in Japan Region */
+    case CTRY_JAPAN:
+      adapter->dfs_region = 2;
+      break;
+      /* Countries in China Region */
+    case CTRY_CHINA:
+      adapter->dfs_region = 4;
+      break;
+      /* Countries in Taiwan Region */
+    case CTRY_TAIWAN:
+      adapter->dfs_region = 5;
+      break;
+      /* Countries in Rest of the World Region */
+    case CTRY_AUSTRALIA:
+    case CTRY_INDIA:
+    case CTRY_IRAN:
+    case CTRY_MALAYSIA:
+    case CTRY_NEW_ZEALAND:
+    case CTRY_RUSSIA:
+    case CTRY_SINGAPORE:
+    case CTRY_SOUTH_AFRICA:
+      adapter->dfs_region = 3;
+      break;
+    default:
+      rsi_dbg(ERR_ZONE, "%s: Default Country Code %d selected\n", __func__, country_code);
+      adapter->dfs_region = 3;
+      break;
+  }
+}
+
 /**
  * rsi_91x_init() - This function initializes os interface operations.
  * @void: Void.
@@ -765,11 +834,15 @@ struct rsi_hw *rsi_91x_init(void)
   common->w9116_features.ps_options = pwr_save_opt;
   common->wlan_pwrsave_options      = ((lmac_bcon_drop << 5) | (standby_assoc_chain_sel << 4));
   common->driver_mode               = driver_mode_value;
-  common->enable_40mhz_in_2g        = enable_40mhz_in_2g;
+  common->enable_40mhz              = enable_40mhz;
   common->enabled_uapsd             = enabled_uapsd;
   common->max_sp_len                = max_sp_len;
+  common->pta_config                = pta_config;
   common->xtal_good_time            = xtal_good_time;
   common->rx_data_inactive_interval = rx_data_inactive_interval;
+  common->default_deep_sleep_enable = default_deep_sleep_enable;
+  common->enable_encap_offload      = enable_encap_offload;
+  obm_configure_region(adapter, country_code);
 
   if (rsi_create_kthread(common, &common->tx_thread, rsi_tx_scheduler_thread, "Tx-Thread")) {
     rsi_dbg(ERR_ZONE, "%s: Unable to init tx thrd\n", __func__);
@@ -908,4 +981,4 @@ MODULE_DESCRIPTION("Station driver for RSI 91x devices");
 MODULE_SUPPORTED_DEVICE("RSI-91x");
 #endif
 MODULE_VERSION(DRV_VER);
-MODULE_LICENSE("Dual BSD/GPL");
+MODULE_LICENSE("GPL");

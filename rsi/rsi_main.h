@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_main.h
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #ifndef __RSI_MAIN_H__
 #define __RSI_MAIN_H__
@@ -29,7 +17,7 @@ struct rsi_hw;
 
 #include "rsi_ps.h"
 
-#define DRV_VER "RS9116.NB0.NL.GNU.LNX.OSD.2.5.1.11"
+#define DRV_VER "RS9116.NB0.NL.GNU.LNX.OSD.2.6.1.8"
 #define ERR_ZONE        BIT(0)  /* Error Msgs		*/
 #define INFO_ZONE       BIT(1)  /* Generic Debug Msgs	*/
 #define INIT_ZONE       BIT(2)  /* Driver Init Msgs	*/
@@ -173,6 +161,8 @@ enum per_commands { PER_RECEIVE = 2, PER_RECV_STOP = 6, PER_TRANSMIT = 1, PER_PA
 #define FSM_AMPDU_IND_SENT     14
 #define CONTINUOUS_RUNNING     1
 #define BURST_RUNNING          2
+#define ACX_MODULE             4
+#define MAX_CHAN_FOR_ACX       13
 
 //############################## EFUSE MAP Defines ########################
 #define EFUSE_MAP_VERSION_OFFSET   28
@@ -439,8 +429,10 @@ struct rsi_common {
   u8 channel_width;
 
   u16 rts_threshold;
+  u16 frag_threshold;
   u16 bitrate_mask[2];
   u32 fixedrate_mask[2];
+  bool update_country;
 
   u8 rf_reset;
   struct transmit_q_stats tx_stats;
@@ -636,7 +628,7 @@ struct rsi_common {
   u8 rsi_scan_count;
   bool hwscan_en;
   u32 wlan_pwrsave_options;
-  bool enable_40mhz_in_2g;
+  bool enable_40mhz;
   bool enabled_uapsd;
   u8 max_sp_len;
   u8 bgscan_ssid[32];
@@ -651,11 +643,17 @@ struct rsi_common {
   u8 sta_bssid[ETH_ALEN];
   u8 fixed_rate_en;
   u16 fixed_rate;
+  u16 hw_bmiss_threshold;
+  u16 keep_alive_period;
   u8 xtal_good_time;
   struct efuse_map_s efuse_map;
   //enhanced max psp related
   bool disable_ps_from_lmac;
   u16 rx_data_inactive_interval;
+  u8 minimum_basic_rate;
+  bool default_deep_sleep_enable;
+  u8 pta_config;
+  bool enable_encap_offload;
 };
 
 enum host_intf { RSI_HOST_INTF_SDIO = 0, RSI_HOST_INTF_USB };
@@ -677,6 +675,7 @@ struct eeprom_read {
   u16 length;
   u16 off_set;
 };
+
 
 typedef struct {
   //! no. of tx pkts
@@ -932,6 +931,13 @@ struct rsi_hw {
   bb_rf_params_t bb_rf_read;
   unsigned char bb_rf_rw;
   unsigned char soft_reset;
+  s16 rx_rssi;
+  unsigned long prev_rssi_fetch_time;
+  u8 chip_rev;
+  unsigned long var_interval;
+  unsigned long old_jiffies;
+  unsigned long due_time;
+  bool wifi_paused;
 };
 
 struct acs_stats_s {
@@ -993,11 +999,16 @@ int rsi_bt_e2e_stats(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_l
 int rsi_bt_ble_update_gain_table(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd);
 #endif
 #define UPDATE_WLAN_GAIN_TABLE 78
+#define FILTER_BCAST           79
+#define GET_RSSI               81
 int rsi_update_wlan_gain_table(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len);
 int rsi_transmit_stats_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload);
 int rsi_set_bb_rf_values(struct rsi_hw *adapter);
 int rsi_mgmt_send_bb_prog_frames(struct rsi_hw *adapter, unsigned short *bb_prog_vals, unsigned short num_of_vals);
 int rsi_bb_prog_data_to_app(struct rsi_hw *adapter);
+int send_rssi_to_app(struct rsi_hw *adapter);
+int send_filter_broadcast_frame_to_fw(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len);
+int send_get_rssi_frame_to_fw(struct rsi_hw *adapter);
 void gpio_deinit(struct rsi_common *common);
 #if defined(CONFIG_RSI_COEX_MODE) && defined(CONFIG_RSI_ZIGB)
 struct rsi_mod_ops *rsi_get_zb_ops(void);

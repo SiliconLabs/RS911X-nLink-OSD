@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_common.h
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #ifndef __RSI_COMMON_H__
 #define __RSI_COMMON_H__
@@ -91,6 +79,27 @@ static inline struct sk_buff *rsi_get_aligned_skb(struct sk_buff *skb)
 
   return skb;
 }
+
+enum countrycode {
+  CTRY_AUSTRALIA     = 36,  /* Australia */
+  CTRY_BELGIUM       = 56,  /* Belgium */
+  CTRY_CANADA        = 124, /* Canada */
+  CTRY_CHINA         = 156, /* People's Republic of China */
+  CTRY_TAIWAN        = 158, /* Taiwan */
+  CTRY_FRANCE        = 250, /* France */
+  CTRY_GERMANY       = 276, /* Germany */
+  CTRY_INDIA         = 356, /* India */
+  CTRY_IRAN          = 364, /* Iran */
+  CTRY_ITALY         = 380, /* Italy */
+  CTRY_JAPAN         = 392, /* Japan */
+  CTRY_MALAYSIA      = 458, /* Malaysia */
+  CTRY_MEXICO        = 484, /* Mexico */
+  CTRY_NEW_ZEALAND   = 554, /* New Zealand */
+  CTRY_RUSSIA        = 643, /* Russia */
+  CTRY_SINGAPORE     = 702, /* Singapore */
+  CTRY_SOUTH_AFRICA  = 710, /* South Africa */
+  CTRY_UNITED_STATES = 840, /* United States */
+};
 
 int rsi_load_radio_caps(struct rsi_common *common);
 void rsi_mac80211_detach(struct rsi_hw *hw);

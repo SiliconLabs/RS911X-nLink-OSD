@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_debugfs.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include "rsi_debugfs.h"
 #include "rsi_sdio.h"
@@ -298,6 +286,8 @@ int rsi_validate_debugfs_bgscan_channels(struct rsi_common *common)
 
   for (ii = 0; ii < bgscan_info->debugfs_bg_channels; ii++) {
     ch_num = bgscan_info->debugfs_channels[ii];
+    if (ch_num & DFS_CHANNEL)
+      ch_num &= ~DFS_CHANNEL;
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 2, 0))
     for (jj = 0; jj < common->user_channels_count; jj++) {
       if (ch_num == common->user_channels_list[jj]) {

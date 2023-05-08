@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_hal.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <linux/firmware.h>
 #include <linux/version.h>
@@ -53,6 +41,16 @@ static struct ta_metadata metadata[] = { { "pmemdata_dummy", 0x00000000 },
                                          { "pmemdata_dummy", 0x00000000 },
                                          { "pmemdata_zigb_coordinator", 0x00000000 },
                                          { "pmemdata_zigb_router", 0x00000000 } };
+
+static struct ta_metadata metadata_1p5[] = { { "pmemdata_dummy", 0x00000000 },
+                                             { "pmemdata_1p5", 0x00000000 },
+                                             { "pmemdata_wlan_bt_classic_1p5", 0x00000000 },
+                                             { "pmemdata_dummy", 0x00000000 },
+                                             { "pmemdata_wlan_bt_classic_1p5", 0x00000000 },
+                                             { "pmemdata_dummy", 0x00000000 },
+                                             { "pmemdata_dummy", 0x00000000 },
+                                             { "pmemdata_dummy", 0x00000000 } };
+
 #elif !defined(CONFIG_RSI_LOAD_FW_FROM_FLASH_ONLY)
 static struct ta_metadata metadata_9116_flash[] = { { "flash_content", 0x00010000 },
                                                     { "RS9116_NLINK_WLAN_IMAGE.rps", 0x00010000 },
@@ -114,6 +112,7 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
   struct ieee80211_hdr *wh  = NULL;
   struct ieee80211_tx_info *info;
   struct skb_info *tx_params;
+  struct ethhdr *ehdr   = NULL;
   int status            = -EINVAL;
   u8 ieee80211_hdr_size = MIN_802_11_HDR_LEN;
   u8 dword_align_bytes  = 0;
@@ -126,9 +125,11 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
   struct vif_priv *vif_info = NULL;
 #endif
   struct rsi_sta *sta_info;
+  struct ieee80211_sta *sta = NULL;
 
   info      = IEEE80211_SKB_CB(skb);
   tx_params = (struct skb_info *)info->driver_data;
+  ehdr      = (struct ethhdr *)skb->data;
 
   header_size = FRAME_DESC_SZ + sizeof(struct xtended_desc);
   if (header_size > skb_headroom(skb)) {
@@ -153,9 +154,14 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
   xtend_desc                   = (struct xtended_desc *)&skb->data[FRAME_DESC_SZ];
   memset((u8 *)frame_desc, 0, header_size);
 
-  wh      = (struct ieee80211_hdr *)&skb->data[header_size];
-  seq_num = le16_to_cpu(IEEE80211_SEQ_TO_SN(wh->seq_ctrl));
-  vif     = rsi_get_vif(adapter, wh->addr2);
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+    wh      = (struct ieee80211_hdr *)&skb->data[header_size];
+    seq_num = le16_to_cpu(IEEE80211_SEQ_TO_SN(wh->seq_ctrl));
+    vif     = rsi_get_vif(adapter, wh->addr2);
+  } else {
+    vif = rsi_get_vif(adapter, ehdr->h_source);
+  }
+
   if (!vif) {
     rsi_dbg(ERR_ZONE, "%s: Failed to get vif\n", __func__);
     status = -ENOSPC;
@@ -171,33 +177,53 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
   if (vif->type == NL80211_IFTYPE_STATION) {
 #ifndef CONFIG_STA_PLUS_AP
     sta_info = (struct rsi_sta *)common->stations[RSI_MAX_ASSOC_STAS].sta->drv_priv;
+    sta      = common->stations[RSI_MAX_ASSOC_STAS].sta;
 #else
     sta_info = (struct rsi_sta *)common->stations[tx_params->sta_id].sta->drv_priv;
+    sta      = common->stations[tx_params->sta_id].sta;
 #endif
   } else {
     sta_info = (struct rsi_sta *)common->stations[tx_params->sta_id].sta->drv_priv;
+    sta      = common->stations[tx_params->sta_id].sta;
   }
 
   frame_desc[2] = cpu_to_le16(header_size - FRAME_DESC_SZ);
-  if (ieee80211_is_data_qos(wh->frame_control)) {
-    ieee80211_hdr_size += 2;
-    frame_desc[6] |= cpu_to_le16(BIT(12));
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+    if (ieee80211_is_data_qos(wh->frame_control)) {
+      ieee80211_hdr_size += 2;
+      frame_desc[6] |= cpu_to_le16(BIT(12));
+    }
+  } else {
+    frame_desc[1] = cpu_to_le16(ENCAP_OFFLOAD_DATA_PKT);
+    if (sta && sta->wme)
+      frame_desc[6] |= cpu_to_le16(QOS_SUPPORT);
   }
 
-  if ((vif->type == NL80211_IFTYPE_STATION) && (adapter->ps_state == PS_ENABLED))
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN) && (vif->type == NL80211_IFTYPE_STATION)
+      && (adapter->ps_state == PS_ENABLED))
     wh->frame_control |= BIT(12);
 
-  if ((!(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT)) && (info->control.hw_key)) {
-    if (rsi_is_cipher_wep(common))
-      ieee80211_hdr_size += 4;
-    else
-      ieee80211_hdr_size += 8;
-    frame_desc[6] |= cpu_to_le16(BIT(15));
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+
+    if ((!(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT)) && (info->control.hw_key)) {
+      if (rsi_is_cipher_wep(common))
+        ieee80211_hdr_size += 4;
+      else
+        ieee80211_hdr_size += 8;
+      frame_desc[6] |= cpu_to_le16(ENABLE_ENCRYPTION);
+    }
+  } else {
+    if (!(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT) && (skb->protocol != cpu_to_be16(ETH_P_PAE))
+        && (skb->protocol != cpu_to_be16(ETH_P_802_3))) {
+      frame_desc[6] |= cpu_to_le16(ENABLE_ENCRYPTION);
+    }
   }
 
   frame_desc[0] = cpu_to_le16((skb->len - FRAME_DESC_SZ) | (RSI_WIFI_DATA_Q << 12));
-  frame_desc[2] |= cpu_to_le16(ieee80211_hdr_size << 8);
-
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+    frame_desc[2] |= cpu_to_le16(ieee80211_hdr_size << 8);
+    frame_desc[6] |= cpu_to_le16(seq_num);
+  }
   if (common->min_rate != 0xffff) {
     /* Send fixed rate */
     frame_desc[3] = cpu_to_le16(RATE_INFO_ENABLE);
@@ -220,14 +246,28 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
     frame_desc[3] = cpu_to_le16(RATE_INFO_ENABLE);
     frame_desc[4] = cpu_to_le16(common->fixed_rate);
   }
-  if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
+  if (((vif->type == NL80211_IFTYPE_STATION)
+       && ((skb->protocol == cpu_to_be16(ETH_P_PAE)) || (skb->protocol == cpu_to_be16(ETH_P_802_3))))
+      || ((vif->type == NL80211_IFTYPE_AP) && (skb->protocol == cpu_to_be16(ETH_P_PAE)))) {
     rsi_dbg(INFO_ZONE, "*** Tx EAPOL ***\n");
 
     frame_desc[3] = cpu_to_le16(RATE_INFO_ENABLE);
-    frame_desc[4] = cpu_to_le16(sta_info->min_supported_rate);
+    if (vif->type == NL80211_IFTYPE_STATION)
+      frame_desc[4] = cpu_to_le16(sta_info->min_supported_rate);
+    else if (vif->type == NL80211_IFTYPE_AP)
+      frame_desc[4] = (common->band == NL80211_BAND_5GHZ ? cpu_to_le16(RSI_RATE_6) : cpu_to_le16(RSI_RATE_1));
 
     frame_desc[6] |= cpu_to_le16(QUEUE_TO_HEAD);
-    frame_desc[1] |= cpu_to_le16(FETCH_RETRY_CNT_FRM_HST);
+    if ((tx_params->flags & ENCAP_OFFLOAD_EN)) {
+      if (vif->type == NL80211_IFTYPE_STATION) {
+        frame_desc[1] = cpu_to_le16(FETCH_RETRY_CNT_FRM_HST);
+        frame_desc[1] |= cpu_to_le16(ENCAP_OFFLOAD_MGMT_PKT);
+      } else {
+        frame_desc[1] |= cpu_to_le16(FETCH_RETRY_CNT_FRM_HST);
+      }
+    } else {
+      frame_desc[1] |= cpu_to_le16(FETCH_RETRY_CNT_FRM_HST);
+    }
     if (vif->type == NL80211_IFTYPE_STATION) {
       if (common->eapol4_confirm) {
         /* Eapol Rekeying , Change the priority to Voice _Q
@@ -236,32 +276,53 @@ int rsi_prepare_data_desc(struct rsi_common *common, struct sk_buff *skb)
       } else {
         frame_desc[0] = cpu_to_le16((skb->len - FRAME_DESC_SZ) | (RSI_WIFI_MGMT_Q << 12));
       }
-      if (((skb->len - header_size) == 133) || ((skb->len - header_size) == 131)) {
-        rsi_dbg(INFO_ZONE, "*** Tx EAPOL 4*****\n");
-        frame_desc[1] |= cpu_to_le16(RSI_DESC_REQUIRE_CFM_TO_HOST);
-        xtend_desc->confirm_frame_type = EAPOL4_CONFIRM;
+
+      if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+        if (((skb->len - header_size) == 133) || ((skb->len - header_size) == 131)) {
+          rsi_dbg(INFO_ZONE, "*** Tx EAPOL 4*****\n");
+          frame_desc[1] |= cpu_to_le16(RSI_DESC_REQUIRE_CFM_TO_HOST);
+          xtend_desc->confirm_frame_type = EAPOL4_CONFIRM;
+        }
+      } else {
+        if (skb->len == EAPOL_4_LEN + header_size) {
+          rsi_dbg(INFO_ZONE, "*** Tx EAPOL 4*****\n");
+          frame_desc[1] |= cpu_to_le16(RSI_DESC_REQUIRE_CFM_TO_HOST);
+          xtend_desc->confirm_frame_type = EAPOL4_CONFIRM;
+        }
       }
     }
 #define EAPOL_RETRY_CNT 15
     xtend_desc->retry_cnt = EAPOL_RETRY_CNT;
   }
 
-  frame_desc[6] |= cpu_to_le16(seq_num);
   frame_desc[7] = cpu_to_le16(((tx_params->tid & 0xf) << 4) | (skb->priority & 0xf) | (tx_params->sta_id << 8));
 
-  if ((is_broadcast_ether_addr(wh->addr1)) || (is_multicast_ether_addr(wh->addr1))) {
-    frame_desc[3] = cpu_to_le16(RATE_INFO_ENABLE);
-    frame_desc[3] |= cpu_to_le16(RSI_BROADCAST_PKT);
-    if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO)) {
-      if (common->band == NL80211_BAND_5GHZ)
-        frame_desc[4] = cpu_to_le16(RSI_RATE_6);
-      else
-        frame_desc[4] = cpu_to_le16(RSI_RATE_1);
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+    if ((is_broadcast_ether_addr(wh->addr1)) || (is_multicast_ether_addr(wh->addr1))) {
+      frame_desc[3] = cpu_to_le16(RATE_INFO_ENABLE);
+      frame_desc[3] |= cpu_to_le16(RSI_BROADCAST_PKT);
+      if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO)) {
+        if (common->band == NL80211_BAND_5GHZ)
+          frame_desc[4] = cpu_to_le16(RSI_RATE_6);
+        else
+          frame_desc[4] = cpu_to_le16(RSI_RATE_1);
+      }
+      frame_desc[7] = cpu_to_le16(((tx_params->tid & 0xf) << 4) | (skb->priority & 0xf) | (vap_id << 8));
     }
-    frame_desc[7] = cpu_to_le16(((tx_params->tid & 0xf) << 4) | (skb->priority & 0xf) | (vap_id << 8));
+  } else {
+    if ((is_broadcast_ether_addr(ehdr->h_dest)) || (is_multicast_ether_addr(ehdr->h_dest))) {
+      if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO)) {
+        if (common->band == NL80211_BAND_5GHZ)
+          frame_desc[4] = cpu_to_le16(RSI_RATE_6);
+        else
+          frame_desc[4] = cpu_to_le16(RSI_RATE_1);
+      }
+      frame_desc[7] = cpu_to_le16(((tx_params->tid & 0xf) << 4) | (skb->priority & 0xf) | (vap_id << 8));
+    }
   }
 
-  if (((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO))
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)
+      && ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO))
       && (ieee80211_has_moredata(wh->frame_control)))
     frame_desc[3] |= cpu_to_le16(MORE_DATA_PRESENT);
 
@@ -359,13 +420,18 @@ int rsi_prepare_mgmt_desc(struct rsi_common *common, struct sk_buff *skb)
     desc[3] |= cpu_to_le16(RSI_BROADCAST_PKT);
   desc[6] |= cpu_to_le16(IEEE80211_SEQ_TO_SN(wh->seq_ctrl));
 
-  if (common->band == NL80211_BAND_2GHZ)
-    if (!common->p2p_enabled)
-      desc[4] = cpu_to_le16(RSI_RATE_1);
+  if (ieee80211_is_probe_req(wh->frame_control) || ieee80211_is_probe_resp(wh->frame_control)
+      || (vif->type == NL80211_IFTYPE_AP)) {
+    if (common->band == NL80211_BAND_2GHZ)
+      if (!common->p2p_enabled)
+        desc[4] = cpu_to_le16(RSI_RATE_1);
+      else
+        desc[4] = cpu_to_le16(RSI_RATE_6);
     else
       desc[4] = cpu_to_le16(RSI_RATE_6);
-  else
-    desc[4] = cpu_to_le16(RSI_RATE_6);
+  } else {
+    desc[4] = cpu_to_le16(common->minimum_basic_rate);
+  }
 
   if (conf_is_ht40(conf)) {
     desc[5] = cpu_to_le16(FULL40M_ENABLE);
@@ -408,6 +474,7 @@ int rsi_send_data_pkt(struct rsi_common *common, struct sk_buff *skb)
   struct rsi_hw *adapter    = common->priv;
   struct ieee80211_vif *vif = NULL;
   struct ieee80211_hdr *wh  = NULL;
+  struct ethhdr *ehdr       = NULL;
   struct ieee80211_tx_info *info;
   struct skb_info *tx_params;
   struct ieee80211_bss_conf *bss = NULL;
@@ -425,8 +492,13 @@ int rsi_send_data_pkt(struct rsi_common *common, struct sk_buff *skb)
   tx_params = (struct skb_info *)info->driver_data;
 
   header_size = tx_params->internal_hdr_size;
-  wh          = (struct ieee80211_hdr *)&skb->data[header_size];
-  vif         = rsi_get_vif(adapter, wh->addr2);
+  if (!(tx_params->flags & ENCAP_OFFLOAD_EN)) {
+    wh  = (struct ieee80211_hdr *)&skb->data[header_size];
+    vif = rsi_get_vif(adapter, wh->addr2);
+  } else {
+    ehdr = (struct ethhdr *)&skb->data[header_size];
+    vif  = rsi_get_vif(adapter, ehdr->h_source);
+  }
 
   if (!vif) {
     rsi_dbg(ERR_ZONE, "%s: Failed to get vif\n", __func__);
@@ -436,7 +508,7 @@ int rsi_send_data_pkt(struct rsi_common *common, struct sk_buff *skb)
   if (vif->type == NL80211_IFTYPE_STATION) {
     if (!bss->assoc)
       goto err;
-    if (!ether_addr_equal(wh->addr1, bss->bssid))
+    if (!(tx_params->flags & ENCAP_OFFLOAD_EN) && !ether_addr_equal(wh->addr1, bss->bssid))
       goto err;
   }
 
@@ -497,9 +569,10 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
 
   if (common->iface_down)
     goto out;
-  if (!info->control.vif)
-    goto out;
-  bss = &info->control.vif->bss_conf;
+
+  if (tx_params->flags & ENCAP_OFFLOAD_EN)
+    goto snd_encap_data;
+
   wh  = (struct ieee80211_hdr *)&skb->data[header_size];
   vif = rsi_get_vif(adapter, wh->addr2);
   if (!vif) {
@@ -508,6 +581,12 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
     goto out;
   }
 
+  bss = &vif->bss_conf;
+  if (!bss) {
+    rsi_dbg(ERR_ZONE, "%s: BSS is NULL \n", __func__);
+    status = -ENOSPC;
+    goto out;
+  }
   desc       = (__le16 *)skb->data;
   xtend_desc = (struct xtended_desc *)&skb->data[FRAME_DESC_SZ];
 
@@ -570,6 +649,8 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
   rsi_dbg(MGMT_TX_ZONE, "Sending Packet : %s =====>\n", dot11_pkt_type(wh->frame_control));
 
   rsi_hex_dump(MGMT_TX_ZONE, "Tx Mgmt Packet", skb->data, skb->len);
+
+snd_encap_data:
   status = rsi_send_pkt(common, skb);
 
   if (status) {
@@ -1198,6 +1279,7 @@ static int rsi_load_9116_flash_fw(struct rsi_hw *adapter)
   return 0;
 }
 #else
+
 static int rsi_load_9116_firmware(struct rsi_hw *adapter)
 {
   struct rsi_common *common         = adapter->priv;
@@ -1212,6 +1294,7 @@ static int rsi_load_9116_firmware(struct rsi_hw *adapter)
   u32 base_address;
   u32 block_size;
   struct lmac_version_info *version_info;
+  u32 chip_rev = 0;
 
   rsi_dbg(INIT_ZONE, "***** Load 9116 TA Instructions *****\n");
 
@@ -1220,7 +1303,15 @@ static int rsi_load_9116_firmware(struct rsi_hw *adapter)
     return -EIO;
   }
 
-  metadata_p = &metadata[adapter->priv->coex_mode];
+  if (hif_ops->master_reg_read(adapter, REG_CHIP_REV, &chip_rev, 2) < 0) {
+    rsi_dbg(ERR_ZONE, "%s: REG_CHIP_REV reading failed\n", __func__);
+    return -EIO;
+  }
+  adapter->chip_rev = chip_rev & 0xff;
+  if (adapter->chip_rev == CHIP_REV_1P5)
+    metadata_p = &metadata_1p5[adapter->priv->coex_mode];
+  else
+    metadata_p = &metadata[adapter->priv->coex_mode];
 
   rsi_dbg(INIT_ZONE, "%s: loading file %s\n", __func__, metadata_p->name);
   adapter->fw_file_name = metadata_p->name;

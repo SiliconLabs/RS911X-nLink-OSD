@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_sdio_ops.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <linux/firmware.h>
 #include "rsi_sdio.h"
@@ -325,10 +313,12 @@ void rsi_interrupt_handler(struct rsi_hw *adapter)
 
       switch (isr_type) {
         case BUFFER_AVAILABLE:
-          status = rsi_sdio_check_buffer_status(adapter, 0);
-          if (status < 0)
-            rsi_dbg(ERR_ZONE, "%s: Failed to check buffer status\n", __func__);
           rsi_sdio_ack_intr(common->priv, (1 << PKT_BUFF_AVAILABLE));
+          status = rsi_sdio_check_buffer_status(adapter, 0);
+          if (status < 0) {
+            rsi_dbg(ERR_ZONE, "%s: Failed to check buffer status\n", __func__);
+            break;
+          }
           rsi_set_event(&common->tx_thread.event);
 
           rsi_dbg(ISR_ZONE, "%s: Buffer full/available\n", __func__);
@@ -425,10 +415,10 @@ int rsi_sdio_check_buffer_status(struct rsi_hw *adapter, u8 q_num)
   } else
     dev->rx_info.semi_buffer_full = false;
 
-  if (dev->rx_info.mgmt_buffer_full || dev->rx_info.buf_full_counter)
-    counter = 1;
-  else
+  if (dev->rx_info.semi_buffer_full == false)
     counter = 4;
+  else
+    counter = 1;
 
 out:
   if ((q_num == MGMT_SOFT_Q) && (dev->rx_info.mgmt_buffer_full))

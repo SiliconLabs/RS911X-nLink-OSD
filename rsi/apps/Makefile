@@ -2,7 +2,7 @@ cpy=cp -rf
 
 
 all: 
-	@echo -e "application Makefile"
+	@echo -e "\033[32mCompiling Application...\033[0m"
 	$(CC) -o receive per_receive.c per_sock.c $(CFLAGS)
 	$(CC) -o bt_util bt_util.c per_sock.c $(CFLAGS)
 	$(CC) -o onebox_util update_wlan_gain_table.c onebox_util.c per_sock.c $(CFLAGS)

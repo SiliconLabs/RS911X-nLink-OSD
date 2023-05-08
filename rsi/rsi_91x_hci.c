@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_hci.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include "rsi_hci.h"
 #include "rsi_mgmt.h"
@@ -146,7 +134,6 @@ static int rsi_hci_send_pkt(struct hci_dev *hdev, struct sk_buff *skb)
       break;
 
     default:
-      dev_kfree_skb(skb);
       status = -EILSEQ;
       goto fail;
   }
@@ -178,11 +165,6 @@ static int rsi_hci_send_pkt(struct hci_dev *hdev, struct sk_buff *skb)
   return 0;
 
 fail:
-#ifndef CONFIG_RSI_BT_ANDROID
-  kfree_skb(skb);
-#else
-  dev_kfree_skb(skb);
-#endif
   return status;
 }
 

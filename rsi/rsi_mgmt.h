@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_mgmt.h
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #ifndef __RSI_MGMT_H__
 #define __RSI_MGMT_H__
@@ -107,14 +95,16 @@ enum rx_cmd_type {
 #define RSI_MAX_BGSCAN_CHANNEL_SUPPORTED 0x6F
 #define RSI_MAX_BGSCAN_PROBE_REQ_LEN     0x71
 #define HW_BMISS_THRESHOLD               20
+#define DEFAULT_KEEP_ALIVE_PERIOD        90
 #define CHANNEL_CHANGE_EVENT             BIT(0)
 
 #define RSI_DELETE_PEER   0x0
 #define RSI_ADD_PEER      0x1
 #define START_AMPDU_AGGR  0x1
 #define STOP_AMPDU_AGGR   0x0
-#define INTERNAL_MGMT_PKT 0x99
+#define INTERNAL_MGMT_PKT BIT(0)
 #define ENABLE_RX_STBC    0x0100
+#define ENCAP_OFFLOAD_EN  BIT(1)
 
 #define PUT_BBP_RESET                0
 #define BBP_REG_WRITE                0
@@ -126,6 +116,11 @@ enum rx_cmd_type {
 #define RSI_DESC_REQUIRE_CFM_TO_HOST BIT(10)
 #define ADD_DELTA_TSF_VAP_ID         BIT(11)
 #define FETCH_RETRY_CNT_FRM_HST      BIT(12)
+#define ENCAP_OFFLOAD_DATA_PKT       BIT(0)
+#define QOS_SUPPORT                  BIT(12)
+#define ENABLE_ENCRYPTION            BIT(15)
+#define ENCAP_OFFLOAD_MGMT_PKT       BIT(15)
+#define EAPOL_4_LEN                  113
 
 /*Mac flags*/
 #define QUEUE_TO_HEAD BIT(13)
@@ -236,6 +231,8 @@ enum rx_cmd_type {
 #define ULP_GPIO          1
 #define RF_POWER_3_3      1
 #define RF_POWER_1_9      0
+#define PAUSE_WIFI        1
+#define RESUME_WIFI       2
 
 /* Rx filter word definitions */
 #define PROMISCOUS_MODE                     BIT(0)
@@ -296,7 +293,8 @@ enum rx_cmd_type {
 #define RSI_TX_POWER_MODE_MASK   0x0F
 #define RSI_RX_POWER_MODE_MASK   0xF0
 #define TX_PWR_IN_SNIFFER_MODE   0
-#define TX_AGGR_LIMIT_FOR_RS9116 32
+#define TX_AGGR_LIMIT_FOR_RS9116 16
+#define TX_AGGR_LIMIT_FOR_11N    8
 #define RX_AGGR_LIMIT_FOR_RS9116 8
 #define TX_AGGR_LIMIT_FOR_RS9113 8
 #define EN_ENHANCED_MAX_PSP      BIT(2)
@@ -314,7 +312,7 @@ enum peer_type { PEER_TYPE_AP, PEER_TYPE_STA, PEER_TYPE_P2P_GO, PEER_TYPE_P2P_CL
 enum rx_misc_ind_subtype { FW_UPGRADE_REQ };
 
 extern struct ieee80211_rate rsi_rates[12];
-extern const u16 rsi_mcsrates[8];
+extern u16 rsi_mcsrates[8];
 
 enum sta_notify_events {
   STA_CONNECTED = 0,
@@ -377,6 +375,8 @@ enum cmd_frame_type {
   DISABLE_PS_FROM_LMAC   = 0x35,
   WOWLAN_WAKEUP_REASON   = 0xc5, /* 0xC5 */
   WLAN_GAIN_TABLE_UPDATE = 0x45, /* 0x45 */
+  FILTER_BCAST_FRAME_TYPE = 0x43,
+  GET_RSSI_FRAME          = 0x4C
 };
 
 struct rsi_ulp_params {
@@ -485,6 +485,8 @@ struct rsi_auto_rate {
   __le16 collision_tolerance;
   __le16 supported_rates[40];
 } __packed;
+#define DISABLE_UPDATED_AUTORATE_PARAMS BIT(0)
+#define DISABLE_AARF_RATE_BLOCKING      BIT(4)
 
 struct qos_params {
   __le16 cont_win_min_q;
@@ -614,6 +616,7 @@ struct rsi_bb_prog_params {
     u16 bb_prog_vals;
   } bb_params_req[100];
 } __packed;
+
 #define RSI_DUTY_CYCLING           BIT(0)
 #define RSI_END_OF_FRAME           BIT(1)
 #define RSI_SIFS_TX_ENABLE         BIT(2)
@@ -687,6 +690,7 @@ int rsi_send_sta_notify_frame(struct rsi_common *common,
                               u16 aid,
                               u16 sta_id);
 int rsi_send_beacon(struct rsi_common *common);
+int rsi_send_auto_rate_request(struct rsi_common *common, struct ieee80211_sta *sta, u16 sta_id);
 #else
 int rsi_load_key(struct rsi_common *common,
                  u8 *data,
@@ -716,6 +720,10 @@ int rsi_send_sta_notify_frame(struct rsi_common *common,
                               u16 aid,
                               u16 sta_id,
                               struct ieee80211_vif *vif);
+int rsi_send_auto_rate_request(struct rsi_common *common,
+                               struct ieee80211_sta *sta,
+                               u16 sta_id,
+                               struct ieee80211_vif *vif);
 #endif
 void rsi_indicate_pkt_to_os(struct rsi_common *common, struct sk_buff *skb);
 int rsi_mac80211_attach(struct rsi_common *common);
@@ -739,6 +747,7 @@ int rsi_hci_attach(struct rsi_common *common);
 int rsi_handle_card_ready(struct rsi_common *common, u8 *msg);
 int rsi_send_bt_reg_params(struct rsi_common *common);
 void rsi_validate_bgscan_channels(struct rsi_hw *adapter, struct bgscan_config_params *params);
+void update_bgscan_channel_for_acx_module(struct rsi_common *common);
 int rsi_validate_debugfs_bgscan_channels(struct rsi_common *common);
 int rsi_start_per_burst(struct rsi_hw *adapter);
 void init_traffic_timer(struct rsi_hw *adapter, unsigned long timeout);

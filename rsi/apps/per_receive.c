@@ -1,20 +1,7 @@
-/*******************************************************************************
-* @file  per_receive.c
-* @brief This file includes Receive application which is used to receive PER and END to 
-* END stats from driver
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <stdio.h>
 #include <unistd.h>
@@ -246,27 +233,8 @@ int main(int argc, char **argv)
           printf(" %8s %8s %8s %8s\n", "crc_pass", "crc_fail", "false_cca", "cal_rssi");
           fprintf(pFile, "%8s %8s %8s %8s\n", "crc_pass", "crc_fail", "false_cca", "cal_rssi");
 #else
-          printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
-                 "crc_pass",
-                 "crc_fail",
-                 "non_wifi_pkt",
-                 "false_ed",
-                 "pkt_abort",
-                 "fls_rx_start",
-                 "false_cca",
-                 "cal_rssi",
-                 "ack_sent");
-          fprintf(pFile,
-                  "\n%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
-                  "crc_pass",
-                  "crc_fail",
-                  "non_wifi_pkt",
-                  "false_ed",
-                  "pkt_abort",
-                  "fls_rx_start",
-                  "false_cca",
-                  "cal_rssi",
-                  "ack_sent");
+          printf("%12s %12s\n", "crc_pass", "crc_fail");
+          fprintf(pFile, "\n%12s %12s\n", "crc_pass", "crc_fail");
 #endif
         }
 #ifdef PER_BASIC_STATS
@@ -278,27 +246,8 @@ int main(int argc, char **argv)
                 sta_info->cca_idle,
                 sta_info->cal_rssi);
 #else
-        printf("%12d %12d %12d %12d %12d %12d %12d %12d %12d\n",
-               sta_info->crc_pass,
-               sta_info->crc_fail,
-               sta_info->cca_stk,     /*non_wifi_pkt*/
-               sta_info->cca_not_stk, /*false_ed*/
-               sta_info->pkt_abort,
-               sta_info->fls_rx_start,
-               sta_info->cca_idle,
-               sta_info->cal_rssi,
-               sta_info->ack_sent);
-        fprintf(pFile,
-                "%12d %12d %12d %12d %12d %12d %12d %12d %12d\n",
-                sta_info->crc_pass,
-                sta_info->crc_fail,
-                sta_info->cca_stk,
-                sta_info->cca_not_stk,
-                sta_info->pkt_abort,
-                sta_info->fls_rx_start,
-                sta_info->cca_idle,
-                sta_info->cal_rssi,
-                sta_info->ack_sent);
+        printf("%12d %12d\n", sta_info->crc_pass, sta_info->crc_fail);
+        fprintf(pFile, "%12d %12d\n", sta_info->crc_pass, sta_info->crc_fail);
 #endif
 #else
           printf(" %20s %8s %10s %10s %10s \n", "tx_pkts", "retries", "pkts_drop", "rssi", "cons_drops");

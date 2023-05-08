@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  onebox_util.h
-* @brief This file includes Receive application related macros and declarations
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #ifndef _ONEBOX_UTILS_H_
 #define _ONEBOX_UTILS_H_
@@ -293,6 +281,17 @@ typedef struct update_wlan_gain_table_s {
   uint32_t reserved;
   uint8_t structure[MAX_WLAN_GAIN_TABLE_SIZE];
 } update_wlan_gain_table_t;
+
+#define RSI_GET_RSSI 81
+/*Filter broadcast frame */
+#define RSI_FILTER_BCAST 79
+struct fltr_bcast {
+  unsigned char reserved;
+  unsigned char filter_bcast_in_tim;
+  unsigned short int beacon_drop_threshold;
+  unsigned char filter_bcast_tim_till_next_cmd;
+};
+
 int gain_table_sckt_creation(update_wlan_gain_table_t table_info, int sfd);
 int update_wlan_gain_table(int argc, char *argv[], char *ifName, int sfd);
 int update_wlan_region_based_struct(int argc, char *argv[], char *ifName, int sfd);
@@ -310,6 +309,8 @@ int per_recv_send_wrapper(per_stats *sta_info,
 int bb_read_write_wrapper(struct bb_rf_param_t bb_rf_params, int sock_fd);
 int per_transmit_packet_wrapper(per_packet_t per_packet, int cmd, int sock_fd);
 int per_transmit_wrapper(per_params_t per_params, int cmd, int sock_fd);
+int send_get_rssi_frame_to_drv(int sock_fd);
+int send_filter_broadcast_frame_to_drv(struct fltr_bcast bcast, int sock_fd);
 #define ONEBOX_STATUS_FAILURE      -1
 #define ONEBOX_STATUS_SUCCESS      0
 #define ONEBOX_STATUS              int_32

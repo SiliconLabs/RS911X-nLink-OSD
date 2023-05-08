@@ -170,7 +170,7 @@ Concurrent Mode
 ===============
 	* Concurrent mode is supported only in dev_oper_mode = 1[Wi-Fi alone mode].
 	* You can create AP or Station on default interface.
-	* To create a new interface use below command. User can create upto 4 vaps[3 - AP's and 1 - STA].
+	* To create a new interface use below command.
 
 	* For AP
 	$> iw dev <intf_name> interface add <new_intf> type __ap

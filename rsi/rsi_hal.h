@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_hal.h
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #ifndef __RSI_HAL_H__
 #define __RSI_HAL_H__
@@ -91,6 +79,7 @@
 #define CMD_PASS       0xAA
 #define CMD_FAIL       0xCC
 #define INVALID_ADDR   0x4C
+#define CHIP_REV_1P5   0x15
 
 #define BURN_BL               0x23
 #define LOAD_HOSTED_FW        'A'
@@ -126,6 +115,7 @@
 #define CHECKSUM_SUCCESS                     0xAA
 #define CHECKSUM_FAILURE                     0xCC
 #define CHECKSUM_INVALID_ADDRESS             0x4C
+#define REG_CHIP_REV                         0x04000437
 
 #define EEPROM_VERSION_OFFSET   77
 #define CALIB_CRC_OFFSET        4092

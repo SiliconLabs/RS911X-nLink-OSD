@@ -1,26 +1,14 @@
-/*******************************************************************************
-* @file  rsi_91x_nlsock.c
-* @brief This file contains registration of nl sockets and respective callbacks
-* to parse the cmd from the application.
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <linux/module.h>
 #include <net/sock.h>
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
 #include "rsi_main.h"
+#include "rsi_mgmt.h"
 
 struct rsi_hw *adapter_g;
 
@@ -29,6 +17,7 @@ static void rsi_nl_recv_msg(struct sk_buff *skb)
   struct nlmsghdr *nlh;
   struct rsi_hw *adapter = adapter_g;
   int pid, payload_len, pkt_type, cmd;
+  unsigned long current_time;
 #if defined(CONFIG_RSI_COEX_MODE) || defined(CONFIG_RSI_BT_ALONE)
   int status;
 #endif
@@ -98,6 +87,31 @@ static void rsi_nl_recv_msg(struct sk_buff *skb)
         adapter->wlan_nl_pid = pid;
         rsi_dbg(MGMT_DEBUG_ZONE, "%s: EFUSE MAP case\n", __func__);
         rsi_copy_efuse_content(adapter);
+        break;
+      case GET_RSSI:
+        adapter->wlan_nl_pid = pid;
+        if (adapter->device_model < RSI_DEV_9116) {
+          rsi_dbg(ERR_ZONE, "GET_RSSI is not supproted in 9113\n");
+          return;
+        }
+        current_time = jiffies_to_msecs(jiffies);
+        if ((current_time - adapter->prev_rssi_fetch_time) <= 5000) {
+          rsi_dbg(ERR_ZONE, "Time b/w get_rssi cmd is less than 5sec, updating previous RSSI\n");
+          send_rssi_to_app(adapter);
+        } else {
+          send_get_rssi_frame_to_fw(adapter);
+          adapter->prev_rssi_fetch_time = current_time;
+        }
+        break;
+      case FILTER_BCAST:
+        if (adapter->device_model < RSI_DEV_9116) {
+          rsi_dbg(ERR_ZONE, "FILTER_BCAST feature is not supproted in 9113\n");
+          return;
+        }
+        payload_len = nl_desc->desc_word[1];
+        if (send_filter_broadcast_frame_to_fw(adapter, nlh, payload_len) < 0) {
+          rsi_dbg(ERR_ZONE, "Invalid Arguments by user\n");
+        }
         break;
       default:
         rsi_dbg(ERR_ZONE, "Invalid Message Type\n");

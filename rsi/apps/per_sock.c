@@ -1,20 +1,7 @@
-/*******************************************************************************
-* @file  per_sock.c
-* @brief This file includes nl socket registration and library functions to
-* communicate with driver for performing PER evaluation.
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <stdlib.h>
 #include <stddef.h>
@@ -250,3 +237,57 @@ int rsi_print_efuse_map(struct efuse_content_t *efuse_content, int sock_fd)
   free(nlh);
   return ret;
 }
+
+int send_filter_broadcast_frame_to_drv(struct fltr_bcast bcast, int sock_fd)
+{
+  struct sockaddr_nl dest_addr;
+  struct nlmsghdr *nlh         = NULL;
+  struct rsi_nl_desc *nlh_desc = NULL;
+  int ret, len;
+  len = sizeof(struct fltr_bcast);
+  memset(&dest_addr, 0, sizeof(dest_addr));
+  dest_addr.nl_family = AF_NETLINK;
+  dest_addr.nl_pid    = 0; /* For Linux kernel */
+  dest_addr.nl_groups = 0; /* unicast */
+  nlh                 = (struct nlmsghdr *)malloc(NLMSG_SPACE(len + NL_DATA_DESC_SZ));
+  memset(nlh, 0, NLMSG_SPACE(len + NL_DATA_DESC_SZ));
+  nlh->nlmsg_len         = NLMSG_SPACE(len + NL_DATA_DESC_SZ);
+  nlh_desc               = (struct rsi_nl_desc *)NLMSG_DATA(nlh);
+  nlh_desc->desc_word[0] = RSI_FILTER_BCAST;
+  nlh_desc->desc_word[1] = len;
+  nlh->nlmsg_pid         = getpid();
+  nlh->nlmsg_flags       = 0;
+  nlh->nlmsg_type        = (unsigned short)WLAN_PACKET;
+  memcpy(NLMSG_DATA(nlh) + NL_DATA_DESC_SZ, &bcast, len);
+  ret = common_send_mesg_wrapper(sock_fd, dest_addr, nlh);
+  if (ret < 0)
+    close(sock_fd);
+  free(nlh);
+  return ret;
+}
+
+int send_get_rssi_frame_to_drv(int sock_fd)
+{
+  struct sockaddr_nl dest_addr;
+  struct nlmsghdr *nlh         = NULL;
+  struct rsi_nl_desc *nlh_desc = NULL;
+  int ret, len;
+  memset(&dest_addr, 0, sizeof(dest_addr));
+  dest_addr.nl_family = AF_NETLINK;
+  dest_addr.nl_pid    = 0; /* For Linux kernel */
+  dest_addr.nl_groups = 0; /* unicast */
+  nlh                 = (struct nlmsghdr *)malloc(NLMSG_SPACE(NL_DATA_DESC_SZ));
+  memset(nlh, 0, NLMSG_SPACE(NL_DATA_DESC_SZ));
+  nlh->nlmsg_len         = NLMSG_SPACE(NL_DATA_DESC_SZ);
+  nlh_desc               = (struct rsi_nl_desc *)NLMSG_DATA(nlh);
+  nlh_desc->desc_word[0] = RSI_GET_RSSI;
+  nlh->nlmsg_pid         = getpid();
+  nlh->nlmsg_flags       = 0;
+  nlh->nlmsg_type        = (unsigned short)WLAN_PACKET;
+  ret                    = common_send_mesg_wrapper(sock_fd, dest_addr, nlh);
+  if (ret < 0)
+    close(sock_fd);
+  free(nlh);
+  return ret;
+}
+

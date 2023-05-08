@@ -1,19 +1,7 @@
-/*******************************************************************************
-* @file  rsi_91x_ps.c
-* @brief 
-*******************************************************************************
-* # License
-* <b>Copyright 2020 Silicon Laboratories Inc. www.silabs.com</b>
-*******************************************************************************
-*
-* The licensor of this software is Silicon Laboratories Inc. Your use of this
-* software is governed by the terms of Silicon Labs Master Software License
-* Agreement (MSLA) available at
-* www.silabs.com/about-us/legal/master-software-license-agreement. This
-* software is distributed to you in Source Code format and is governed by the
-* sections of the MSLA applicable to Source Code.
-*
-******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright 2020-2023 Silicon Labs, Inc.
+ */
 
 #include <linux/etherdevice.h>
 #include <linux/if.h>
@@ -159,7 +147,7 @@ static void traffic_timer_callback(struct timer_list *t)
 
   if (assoc) {
     if ((adapter->user_ps_en) && (ps_info->monitor_interval || common->rx_data_inactive_interval)) {
-      if (adapter->ps_state == PS_NONE) {
+      if (!adapter->wifi_paused && adapter->ps_state == PS_NONE) {
         if (common->disable_ps_from_lmac)
           common->disable_ps_from_lmac = false;
         rsi_enable_ps(adapter);
@@ -189,6 +177,8 @@ void check_data_load(struct rsi_hw *adapter)
     duration_i = ps_info->monitor_interval;
   else
     duration_i = adapter->priv->rx_data_inactive_interval;
+  adapter->var_interval = msecs_to_jiffies(duration_i);
+  adapter->old_jiffies  = jiffies;
 
   if (adapter->traffic_timer.function) {
     mod_timer(&adapter->traffic_timer, msecs_to_jiffies(duration_i) + jiffies);
@@ -286,7 +276,7 @@ int protocol_tx_access(struct rsi_common *common)
   }
   return 0;
 }
-EXPORT_SYMBOL(protocol_tx_access);
+EXPORT_SYMBOL_GPL(protocol_tx_access);
 
 void sleep_exit_recvd(struct rsi_common *common)
 {
@@ -304,7 +294,7 @@ void sleep_exit_recvd(struct rsi_common *common)
     proto_id++;
   }
 }
-EXPORT_SYMBOL(sleep_exit_recvd);
+EXPORT_SYMBOL_GPL(sleep_exit_recvd);
 
 #if defined(CONFIG_ARCH_HAVE_CUSTOM_GPIO_H)
 #define MAX_RETRY_LIMIT 30
@@ -421,4 +411,4 @@ int set_clr_tx_intention(struct rsi_common *common, u8 proto_id, u8 set)
   }
   return status;
 }
-EXPORT_SYMBOL(set_clr_tx_intention);
+EXPORT_SYMBOL_GPL(set_clr_tx_intention);
