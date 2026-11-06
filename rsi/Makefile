@@ -162,6 +162,7 @@ ifeq ($(OFFLOAD_SCAN_TO_DEVICE), y)
 EXTRA_CFLAGS += -DOFFLOAD_SCAN_TO_DEVICE
 endif
 
+ccflags-y += $(EXTRA_CFLAGS)
 obj-m := rsi_sdio.o rsi_usb.o rsi_91x.o
 rsi_sdio-objs := $(COMMON_SDIO_OBJS)
 rsi_usb-objs := $(COMMON_USB_OBJS)

@@ -79,7 +79,7 @@
 #define CMD_PASS       0xAA
 #define CMD_FAIL       0xCC
 #define INVALID_ADDR   0x4C
-#define CHIP_REV_1P5   0x15
+#define CHIP_REV_1P5   0xF
 
 #define BURN_BL               0x23
 #define LOAD_HOSTED_FW        'A'
@@ -115,7 +115,7 @@
 #define CHECKSUM_SUCCESS                     0xAA
 #define CHECKSUM_FAILURE                     0xCC
 #define CHECKSUM_INVALID_ADDRESS             0x4C
-#define REG_CHIP_REV                         0x04000437
+#define REG_CHIP_REV                         0x110000
 
 #define EEPROM_VERSION_OFFSET   77
 #define CALIB_CRC_OFFSET        4092

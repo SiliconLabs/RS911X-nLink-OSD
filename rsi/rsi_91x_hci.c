@@ -231,7 +231,7 @@ int rsi_bt_e2e_stats(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_l
   struct sk_buff *skb;
   struct rsi_hci_adapter *h_adapter = (struct rsi_hci_adapter *)common->hci_adapter;
 
-  if (h_adapter->priv->bt_fsm_state != BT_DEVICE_READY) {
+  if (!h_adapter || h_adapter->priv->bt_fsm_state != BT_DEVICE_READY) {
     rsi_dbg(ERR_ZONE, "BT Device not ready\n");
     return -ENODEV;
   }
@@ -278,13 +278,77 @@ int rsi_process_rx_bt_e2e_stats(struct rsi_common *common, bt_stats_t bt_stats)
   return 0;
 }
 
+int rsi_bt_per_stats(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd)
+{
+  struct rsi_common *common = adapter->priv;
+  struct sk_buff *skb;
+  int status                        = 0;
+  struct rsi_hci_adapter *h_adapter = (struct rsi_hci_adapter *)common->hci_adapter;
+
+  if (!h_adapter || h_adapter->priv->bt_fsm_state != BT_DEVICE_READY) {
+    rsi_dbg(ERR_ZONE, "BT Device not ready\n");
+    return -ENODEV;
+  }
+  rsi_dbg(MGMT_TX_ZONE, "%s: <==== Sending BT_PER_STATS frame ====>\n", __func__);
+
+  skb = dev_alloc_skb(payload_len);
+  if (!skb)
+    return -ENOMEM;
+
+  memset(skb->data, 0, payload_len);
+  memcpy(skb->data, nlmsg_data(nlh) + FRAME_DESC_SZ, payload_len);
+  skb_put(skb, payload_len);
+  bt_cb(skb)->pkt_type = cpu_to_le16(BT_PER);
+  rsi_hex_dump(MGMT_TX_ZONE, "BT PER STATS ", skb->data, skb->len);
+
+  /* Reset before send so a fast BT_PER confirm cannot be lost */
+  if (adapter->read_cmd)
+    rsi_reset_event(&common->rsi_bt_per_event);
+
+#ifdef CONFIG_RSI_COEX_MODE
+  rsi_coex_send_pkt(common, skb, BT_Q);
+#else
+  rsi_send_bt_pkt(common, skb);
+#endif
+  if (adapter->read_cmd) {
+    status = rsi_wait_event(&common->rsi_bt_per_event, EVENT_WAIT_FOREVER);
+    if (status < 0)
+      return status;
+  }
+
+  return 0;
+}
+
+int rsi_process_rx_bt_per_stats(struct rsi_common *common, bt_per_stats_t bt_per_stats)
+{
+  struct sk_buff *skb_out = NULL;
+  struct nlmsghdr *nlh    = NULL;
+  int msg_size, res;
+  struct rsi_hw *adapter = common->priv;
+  msg_size               = sizeof(bt_per_stats_t);
+  skb_out                = nlmsg_new(msg_size, 0);
+  if (!skb_out) {
+    rsi_dbg(ERR_ZONE, "%s: Failed to allocate skb\n", __func__);
+    return -1;
+  }
+  nlh = nlmsg_put(skb_out, adapter->bt_nl_pid, 0, NLMSG_DONE, msg_size, 0);
+  memcpy(nlmsg_data(nlh), &bt_per_stats, msg_size);
+  rsi_dbg(MGMT_RX_ZONE, "<==== Sending BT PER STATS to Application ====>\n");
+  res = nlmsg_unicast(adapter->nl_sk, skb_out, adapter->bt_nl_pid);
+  if (res < 0) {
+    rsi_dbg(ERR_ZONE, "%s: Failed to send BT PER stats to Application\n", __func__);
+    return -1;
+  }
+  return 0;
+}
+
 int rsi_bt_ble_update_gain_table(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd)
 {
   struct rsi_common *common = adapter->priv;
   struct sk_buff *skb;
   struct rsi_hci_adapter *h_adapter = (struct rsi_hci_adapter *)common->hci_adapter;
 
-  if (h_adapter->priv->bt_fsm_state != BT_DEVICE_READY) {
+  if (!h_adapter || h_adapter->priv->bt_fsm_state != BT_DEVICE_READY) {
     rsi_dbg(ERR_ZONE, "BT Device not ready\n");
     return -ENODEV;
   }
@@ -339,6 +403,7 @@ int rsi_hci_recv_pkt(struct rsi_common *common, u8 *pkt)
   int pkt_len                       = rsi_get_length(pkt, 0);
   u8 queue_no                       = rsi_get_queueno(pkt, 0);
   bt_stats_t bt_stats;
+  bt_per_stats_t bt_per_stats;
   char status;
 
   if ((common->bt_fsm_state == BT_DEVICE_NOT_READY) && (pkt[14] == BT_CARD_READY_IND)) {
@@ -384,6 +449,13 @@ int rsi_hci_recv_pkt(struct rsi_common *common, u8 *pkt)
         rsi_hex_dump(MGMT_RX_ZONE, "BT E2E STATS From LMAC", (char *)&bt_stats, sizeof(bt_stats_t));
         rsi_process_rx_bt_e2e_stats(common, bt_stats);
         return 0;
+      case BT_PER:
+        rsi_dbg(MGMT_RX_ZONE, " Received BT PER STATS confirm from LMAC\n");
+        memcpy(&bt_per_stats, pkt + FRAME_DESC_SZ, sizeof(bt_per_stats_t));
+        rsi_hex_dump(MGMT_RX_ZONE, "BT PER STATS From LMAC", (char *)&bt_per_stats, sizeof(bt_per_stats_t));
+        rsi_set_event(&common->rsi_bt_per_event);
+        rsi_process_rx_bt_per_stats(common, bt_per_stats);
+        return 0;
       case BT_BLE_GAIN_TABLE:
         rsi_dbg(MGMT_RX_ZONE, " Received BT/BLE GAIN TABLE UPDATE confirm from LMAC\n");
         memcpy((char *)&status, pkt + FRAME_DESC_SZ, sizeof(status));
@@ -411,14 +483,53 @@ int rsi_hci_recv_pkt(struct rsi_common *common, u8 *pkt)
   rsi_send_to_stack(common, skb);
   dev_kfree_skb(skb);
   return 0;
-#endif
+#else
+  /* hdev is registered with the Bluetooth stack only in E2E mode; in RF eval
+   * mode the PER responses are delivered to the app over netlink instead.
+   */
+  if (common->driver_mode != E2E_MODE) {
+    rsi_dbg(INFO_ZONE, "%s: Dropping BT pkt; HCI device not registered\n", __func__);
+    dev_kfree_skb(skb);
+    return 0;
+  }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
   return hci_recv_frame(skb);
 #else
   return hci_recv_frame(hdev, skb);
 #endif
+#endif
 }
 EXPORT_SYMBOL_GPL(rsi_hci_recv_pkt);
+
+int rsi_bt_transmit_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd)
+{
+  struct rsi_common *common = adapter->priv;
+  struct sk_buff *skb;
+  struct rsi_hci_adapter *h_adapter = (struct rsi_hci_adapter *)common->hci_adapter;
+
+  if (!h_adapter || h_adapter->priv->bt_fsm_state != BT_DEVICE_READY) {
+    rsi_dbg(ERR_ZONE, "BT Device not ready\n");
+    return -ENODEV;
+  }
+  rsi_dbg(MGMT_TX_ZONE, "%s: <==== Sending BT PER TX cmd ====>\n", __func__);
+
+  skb = dev_alloc_skb(payload_len);
+  if (!skb)
+    return -ENOMEM;
+
+  memset(skb->data, 0, payload_len);
+  memcpy(skb->data, nlmsg_data(nlh) + FRAME_DESC_SZ, payload_len);
+  skb_put(skb, payload_len);
+  bt_cb(skb)->pkt_type = cpu_to_le16(cmd);
+  rsi_hex_dump(MGMT_TX_ZONE, "BT PER", skb->data, skb->len);
+
+#ifdef CONFIG_RSI_COEX_MODE
+  rsi_coex_send_pkt(common, skb, BT_Q);
+#else
+  rsi_send_bt_pkt(common, skb);
+#endif
+  return 0;
+}
 
 /**
  * rsi_hci_attach () - This function initializes HCI interface
@@ -430,8 +541,9 @@ EXPORT_SYMBOL_GPL(rsi_hci_recv_pkt);
 int rsi_hci_attach(struct rsi_common *common)
 {
   struct rsi_hci_adapter *h_adapter = NULL;
-  struct hci_dev *hdev;
-  int status = 0;
+  struct hci_dev *hdev              = NULL;
+  bool hci_registered               = false;
+  int status                        = 0;
 
   /* Allocate HCI adapter */
   /* TODO: Check GFP_ATOMIC */
@@ -456,9 +568,9 @@ int rsi_hci_attach(struct rsi_common *common)
     hdev->bus = HCI_USB;
 
   hci_set_drvdata(hdev, h_adapter);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
   hdev->dev_type = HCI_PRIMARY;
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
   hdev->dev_type = HCI_BREDR;
 #endif
 
@@ -475,10 +587,13 @@ int rsi_hci_attach(struct rsi_common *common)
   skb_queue_head_init(&h_adapter->hci_tx_queue);
   common->hci_adapter = (void *)h_adapter;
 
-  status = hci_register_dev(hdev);
-  if (status < 0) {
-    rsi_dbg(ERR_ZONE, "%s: HCI registration failed with errcode %d\n", __func__, status);
-    goto err;
+  if (common->driver_mode == E2E_MODE) {
+    status = hci_register_dev(hdev);
+    if (status < 0) {
+      rsi_dbg(ERR_ZONE, "%s: HCI registration failed with errcode %d\n", __func__, status);
+      goto err;
+    }
+    hci_registered = true;
   }
 #ifdef CONFIG_RSI_BT_ANDROID
   rsi_init_event(&common->rsi_btchr_read_wait);
@@ -489,7 +604,8 @@ int rsi_hci_attach(struct rsi_common *common)
   }
 #endif
 #ifndef CONFIG_RSI_BT_ANDROID
-  rsi_dbg(INIT_ZONE, "HCI Interface Created with name \'%s\'\n", hdev->name);
+  if (common->driver_mode == E2E_MODE)
+    rsi_dbg(INIT_ZONE, "HCI Interface Created with name \'%s\'\n", hdev->name);
 #endif
   common->bt_fsm_state = BT_DEVICE_READY;
   rsi_dbg(ERR_ZONE, " HCI module init done...\n");
@@ -498,10 +614,12 @@ int rsi_hci_attach(struct rsi_common *common)
 
 err:
   if (hdev) {
-    hci_unregister_dev(hdev);
+    if (hci_registered)
+      hci_unregister_dev(hdev);
     hci_free_dev(hdev);
     h_adapter->hdev = NULL;
   }
+  common->hci_adapter = NULL;
   kfree(h_adapter);
 
   return -EINVAL;
@@ -531,12 +649,14 @@ void rsi_hci_detach(struct rsi_common *common)
   hdev = h_adapter->hdev;
   if (hdev) {
     //hci_dev_hold(hdev);
-    hci_unregister_dev(hdev);
+    if (common->driver_mode == E2E_MODE)
+      hci_unregister_dev(hdev);
     //hci_dev_put(hdev);
     hci_free_dev(hdev);
     h_adapter->hdev = NULL;
   }
   kfree(h_adapter);
+  common->hci_adapter  = NULL;
   common->bt_fsm_state = BT_DEVICE_NOT_READY;
 
   return;

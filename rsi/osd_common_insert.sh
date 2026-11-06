@@ -152,7 +152,12 @@ EXT_OPT=0
 #BIT(4) - MGMT RX ZONE, BIT(5) - DATA TX ZONE, BIT(6) - DATA RX ZONE
 #BIT(7) - FSM ZONE, BIT(8) - ISR ZONE, BIT(9) - INT_MGMT_ZONE
 #BIT(10) - MGMT_DEBUG_ZONE
-RSI_ZONE_ENABLED=0x1
+RSI_ZONE_ENABLED=0x601
+
+#ANTENNA selection
+#Internal-2(Default)
+#External-3
+ANTENNA_SEL=2
 
 PARAMS=" driver_mode_value=$DRIVER_MODE"
 PARAMS=$PARAMS" dev_oper_mode=$DEV_OPER_MODE"
@@ -181,6 +186,7 @@ PARAMS=$PARAMS" lp_handshake_mode=$LP_HANDSHAKE_MODE"
 PARAMS=$PARAMS" max_sp_len=$MAX_SP_LEN"
 PARAMS=$PARAMS" rx_data_inactive_interval=$RX_DATA_INACTIVE_INTERVAL"
 PARAMS=$PARAMS" enabled_uapsd=$ENABLED_UAPSD"
+PARAMS=$PARAMS" antenna_sel=$ANTENNA_SEL"
 '
 
 modprobe mac80211

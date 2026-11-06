@@ -327,19 +327,54 @@ then
 			dhclient -r $tp_wval
 			dhclient -v $tp_wval
 			echo "Station with name : "$tp_wval " is up."
+			iw dev $tp_wval interface add wlan1 type __ap
+			sleep 2
+			wn=`iw dev | grep Interface`
+			wnpl=(${wn//"Interface"/ })
+			len=${#wnpl[@]}
+
+			tp_wval1=''
+
+			l1=${#wnpl1[@]}
+			l2=${#wnpl[@]}
+			flag=1
+
+			if [ $l1 == 0 ]
+			then
+				tp_wval1=${wnpl[0]}
+			else
+				for (( i=0; i<$l2; i++))
+				do
+					for (( j=0; j<$l1; j++))
+					do
+						if [ ${wnpl[$i]} != ${wnpl1[$j]} ]
+						then
+							flag=0
+						else
+							flag=1
+						fi
+					done
+					if [ $flag == 0 ]
+					then
+						tp_wval11=${wnpl[$i]}
+					break
+					fi
+				done
+			fi
+			echo "AP Interface : $tp_wval1"
 			while [ 1 ];
 			do	
 				read -p "In what security you want to start the AP.For open-security mode 1 OR for secured mode type 2: " ap_val	
 				if [ $ap_val == '1' ]
 				then
 					echo "$(tail -n +2 ../scripts/ap_open.conf)" > ../scripts/ap_open.conf
-					echo -e "interface=$tp_wval\n$(cat ../scripts/ap_open.conf)" > ../scripts/ap_open.conf
+					echo -e "interface=$tp_wval1\n$(cat ../scripts/ap_open.conf)" > ../scripts/ap_open.conf
 					$host_apd ../scripts/ap_open.conf -ddddt > log&
 					break
 				elif [ $ap_val == '2' ]
 				then
 					echo "$(tail -n +2 ../scripts/ap_wpa.conf)" > ../scripts/ap_wpa.conf
-					echo -e "interface=$tp_wval\n$(cat ../scripts/ap_wpa.conf)" > ../scripts/ap_wpa.conf
+					echo -e "interface=$tp_wval1\n$(cat ../scripts/ap_wpa.conf)" > ../scripts/ap_wpa.conf
 					$host_apd ../scripts/ap_wpa.conf -ddddt > log&
 					break
 				else

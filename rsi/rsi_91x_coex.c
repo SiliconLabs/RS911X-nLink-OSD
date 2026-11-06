@@ -84,7 +84,11 @@ static void rsi_coex_scheduler_thread(struct rsi_common *common)
       rsi_dbg(ERR_ZONE, "%s,%d:  Failed to get tx_access\n", __func__, __LINE__);
     set_clr_tx_intention(common, BT_ZB_ID, 0);
   } while (atomic_read(&coex_cb->coex_tx_thread.thread_done) == 0);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
   complete_and_exit(&coex_cb->coex_tx_thread.completion, 0);
+#else
+  kthread_complete_and_exit(&coex_cb->coex_tx_thread.completion, 0);
+#endif
 }
 
 int rsi_coex_recv_pkt(struct rsi_common *common, u8 *msg)

@@ -12,12 +12,29 @@
 #include <linux/etherdevice.h>
 #include <linux/version.h>
 #include <linux/cdev.h>
+#include <linux/timer.h>
+
+/*
+ * Timer API changed in kernel 6.16: from_timer() -> timer_container_of(),
+ * del_timer() -> timer_delete(). Centralize the version check here so only
+ * this threshold (e.g. 6.16.0) needs to be updated for newer kernels.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+#define rsi_timer_from_timer(ptr, timer_var, member) from_timer(ptr, timer_var, member)
+#define rsi_timer_del(timer)                         del_timer(timer)
+#else
+#define rsi_timer_from_timer(ptr, timer_var, member) timer_container_of(ptr, timer_var, member)
+#define rsi_timer_del(timer)                         timer_delete(timer)
+#endif
+
+/* Host waits this long for LMAC EAPOL4 TX confirm; then force connection loss */
+#define EAPOL4_CONFIRM_TIMEOUT_MS 1200
 
 struct rsi_hw;
 
 #include "rsi_ps.h"
 
-#define DRV_VER "RS9116.NB0.NL.GNU.LNX.OSD.2.6.1.8"
+#define DRV_VER "RS9116.NB0.NL.GNU.LNX.OSD.2.7.0.6"
 #define ERR_ZONE        BIT(0)  /* Error Msgs		*/
 #define INFO_ZONE       BIT(1)  /* Generic Debug Msgs	*/
 #define INIT_ZONE       BIT(2)  /* Driver Init Msgs	*/
@@ -151,9 +168,17 @@ void rsi_hex_dump(u32 zone, char *msg_str, const u8 *msg, u32 len);
 #define USB_FULL_SPEED_SIZE     64
 
 /* NL SOCKET PER COMMANDS */
-enum per_commands { PER_RECEIVE = 2, PER_RECV_STOP = 6, PER_TRANSMIT = 1, PER_PACKET = 8 };
+enum per_commands {
+  PER_RECEIVE      = 2,
+  PER_RECV_STOP    = 6,
+  PER_TRANSMIT     = 1,
+  PER_PACKET       = 8,
+  BT_PER_TRANSMIT  = 4,
+  PER_BLE_TRANSMIT = 19
+};
 #define WLAN_PACKET 1
 #define BT_PACKET   2
+#define BLE_PACKET  3
 
 #define PER_CONT_MODE          1
 #define PER_BURST_MODE         0
@@ -163,6 +188,13 @@ enum per_commands { PER_RECEIVE = 2, PER_RECV_STOP = 6, PER_TRANSMIT = 1, PER_PA
 #define BURST_RUNNING          2
 #define ACX_MODULE             4
 #define MAX_CHAN_FOR_ACX       13
+
+#define OP_WLAN_STA_MODE   BIT(0)
+#define OP_WLAN_AP_MODE    BIT(1)
+#define OP_BT_CLASSIC_MODE BIT(2)
+#define OP_BT_LE_MODE      BIT(3)
+#define OP_ZIGBEE_MODE     BIT(4)
+#define OP_BT_DUAL_MODE    (BIT(2) | BIT(3))
 
 //############################## EFUSE MAP Defines ########################
 #define EFUSE_MAP_VERSION_OFFSET   28
@@ -466,6 +498,7 @@ struct rsi_common {
   struct cqm_info cqm_info;
   struct bgscan_config_params bgscan_info;
   int bgscan_en;
+  int first_bgscan;
   u8 start_bgscan;
   u8 bgscan_probe_req[1500];
   int bgscan_probe_req_len;
@@ -504,6 +537,7 @@ struct rsi_common {
   bool hibernate_resume;
   bool reinit_hw;
   struct completion wlan_init_completion;
+  struct rsi_event rsi_bt_per_event;
   bool debugfs_bgscan;
   bool debugfs_bgscan_en;
   bool bgscan_in_prog;
@@ -538,6 +572,8 @@ struct rsi_common {
   struct ieee80211_channel *ap_channel;
   struct ieee80211_key_conf *key;
   u8 eapol4_confirm;
+  struct sk_buff *eapol4_skb;
+  struct delayed_work eapol4_confirm_work;
 
   /* Wi-Fi direct mode related */
   bool p2p_enabled;
@@ -564,6 +600,7 @@ struct rsi_common {
   struct cfg80211_scan_request *scan_request;
   struct ieee80211_vif *scan_vif;
   bool scan_in_prog;
+  bool beacon_recvd_on_ch;
   struct workqueue_struct *scan_workqueue;
   struct work_struct scan_work;
   struct rsi_event chan_set_event;
@@ -653,7 +690,18 @@ struct rsi_common {
   u8 minimum_basic_rate;
   bool default_deep_sleep_enable;
   u8 pta_config;
+  bool disable_bb_pwrsave;
   bool enable_encap_offload;
+  bool sw_bmiss_enable;
+
+  /* CSA (Channel Switch Announcement) related */
+  bool csa_in_prog;
+  bool csa_chan_change_done;
+  struct ieee80211_vif *csa_vif;
+  struct ieee80211_channel *csa_channel;
+  u8 csa_count;
+  struct delayed_work csa_dwork; /* performs channel switch after csa_count * beacon_interval */
+  struct rsi_event csa_complete_event;
 };
 
 enum host_intf { RSI_HOST_INTF_SDIO = 0, RSI_HOST_INTF_USB };
@@ -846,6 +894,14 @@ typedef struct bb_rf_params_s {
   unsigned char protocol_id;
 } bb_rf_params_t;
 
+typedef struct bb_rf_params_bt_s {
+  unsigned char value;
+  unsigned char no_of_fields;
+  unsigned char no_of_values;
+  unsigned char soft_reset;
+  unsigned short Data[128];
+} bb_rf_params_bt_t;
+
 struct rsi_hw {
   struct rsi_common *priv;
   enum rsi_dev_model device_model;
@@ -931,7 +987,9 @@ struct rsi_hw {
   bb_rf_params_t bb_rf_read;
   unsigned char bb_rf_rw;
   unsigned char soft_reset;
+  u8 read_cmd;
   s16 rx_rssi;
+  s8 last_rx_rssi; /* last non-zero RSSI from RX packet, for zero-RSSI substitution */
   unsigned long prev_rssi_fetch_time;
   u8 chip_rev;
   unsigned long var_interval;
@@ -997,10 +1055,13 @@ int rsi_process_efuse_content(struct rsi_common *common, struct efuse_map_s);
 #define BT_BLE_GAIN_TABLE 0x06
 int rsi_bt_e2e_stats(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd);
 int rsi_bt_ble_update_gain_table(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd);
+int rsi_bt_transmit_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd);
+int rsi_bt_per_stats(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len, u16 cmd);
 #endif
 #define UPDATE_WLAN_GAIN_TABLE 78
 #define FILTER_BCAST           79
 #define GET_RSSI               81
+#define WLAN_9116_FEATURE      68
 int rsi_update_wlan_gain_table(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len);
 int rsi_transmit_stats_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload);
 int rsi_set_bb_rf_values(struct rsi_hw *adapter);
@@ -1009,6 +1070,25 @@ int rsi_bb_prog_data_to_app(struct rsi_hw *adapter);
 int send_rssi_to_app(struct rsi_hw *adapter);
 int send_filter_broadcast_frame_to_fw(struct rsi_hw *adapter, struct nlmsghdr *nlh, int payload_len);
 int send_get_rssi_frame_to_fw(struct rsi_hw *adapter);
+int rsi_start_ap(struct ieee80211_hw *hw,
+                 struct ieee80211_vif *vif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+                 ,
+                 struct ieee80211_bss_conf *link_conf
+#endif
+);
+int rsi_stats_frame(struct rsi_hw *adapter);
+int rsi_mgmt_send_rf_reset_req(struct rsi_hw *adapter, u16 *bb_prog_vals);
+int rsi_send_bb_reset_req(struct rsi_hw *adapter);
+int set_per_configurations(struct rsi_hw *adapter);
+int prepare_per_pkt(struct rsi_hw *adapter, struct sk_buff *skb);
+int do_continuous_send(struct rsi_hw *adapter);
+int send_per_frame(struct rsi_hw *adapter, unsigned char mode);
+int send_per_ampdu_indication_frame(struct rsi_common *common);
+int start_per_tx(struct rsi_hw *adapter);
+int rsi_validate_pn(struct rsi_hw *adapter, struct ieee80211_hdr *hdr);
+char *rsi_vif_type_to_name(enum nl80211_iftype vif_type);
+void obm_configure_region(struct rsi_hw *adapter, u16 country_region_code);
 void gpio_deinit(struct rsi_common *common);
 #if defined(CONFIG_RSI_COEX_MODE) && defined(CONFIG_RSI_ZIGB)
 struct rsi_mod_ops *rsi_get_zb_ops(void);

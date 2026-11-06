@@ -422,7 +422,13 @@ static ssize_t rsi_bgscan_write(struct file *file, const char __user *user_buff,
     return -ENODEV;
   bss = &vif->bss_conf;
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   if (bss && !bss->assoc) {
+#elif defined(CONFIG_STA_PLUS_AP)
+  if (bss && !vif->cfg.assoc) {
+#else
+  if (bss && !adapter->vifs[adapter->sc_nvifs - 1]->cfg.assoc) {
+#endif
     rsi_dbg(ERR_ZONE, "Send Bgscan params after connection\n");
     return -ENODEV;
   }
@@ -496,15 +502,29 @@ static ssize_t rsi_bgscan_write(struct file *file, const char __user *user_buff,
 
   common->debugfs_bgscan = true;
   mutex_lock(&common->bgscan_lock);
-  if (common->bgscan_in_prog) {
-    common->debugfs_bgscan_en = true;
-    mutex_unlock(&common->bgscan_lock);
-    return total_bytes;
-  } else
+  /*
+   * Apply immediately even if bgscan_in_prog is set. Deferring via
+   * debugfs_bgscan_en caused periodicity-0 disable / re-enable to be skipped.
+   * Debugfs sends params only — never probe_req (scan_request may be stale).
+   * first_bgscan is re-armed below so the next hw_scan sends params + probe.
+   */
+  if (!common->bgscan_info.bgscan_periodicity) {
+    /*
+     * Periodicity 0 disables background scan. Send stop to firmware and
+     * clear bgscan_en so a later non-zero periodicity can fully re-enable.
+     * Keep debugfs channel/params (do not call init_bgscan_params).
+     */
+    rsi_send_bgscan_params(common, 0);
+    common->debugfs_bgscan_en = false;
+    common->bgscan_en         = false;
+  } else {
     rsi_send_bgscan_params(common, 1);
+  }
   mutex_unlock(&common->bgscan_lock);
 
   rsi_dbg(INFO_ZONE, "bgscan params update complete\n");
+  /* Next hw_scan will send params + probe safely with a valid scan_request */
+  common->first_bgscan = 1;
 
   return total_bytes;
 }
@@ -529,7 +549,9 @@ static ssize_t rsi_write_chload_meas_req(struct file *file, const char __user *u
   int ret, i;
   struct rsi_hw *adapter = common->priv;
 #ifndef CONFIG_STA_PLUS_AP
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   struct ieee80211_bss_conf *bss = &adapter->vifs[adapter->sc_nvifs - 1]->bss_conf;
+#endif
 #else
   struct ieee80211_vif *vif      = NULL;
   struct ieee80211_bss_conf *bss = NULL;
@@ -537,10 +559,16 @@ static ssize_t rsi_write_chload_meas_req(struct file *file, const char __user *u
   vif = rsi_get_sta_vif(adapter);
   if (!vif)
     return -ENODEV;
-  bss                            = &vif->bss_conf;
+  bss = &vif->bss_conf;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   if (!bss->assoc) {
+#elif defined(CONFIG_STA_PLUS_AP)
+  if (!vif->cfg.assoc) {
+#else
+  if (!adapter->vifs[adapter->sc_nvifs - 1]->cfg.assoc) {
+#endif
     rsi_dbg(ERR_ZONE, "unable to send channelload in non connected state\n");
     return -EINVAL;
   }
@@ -620,7 +648,9 @@ static ssize_t rsi_write_frame_meas_req(struct file *file, const char __user *us
   int ret, i;
   struct rsi_hw *adapter = common->priv;
 #ifndef CONFIG_STA_PLUS_AP
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   struct ieee80211_bss_conf *bss = &adapter->vifs[adapter->sc_nvifs - 1]->bss_conf;
+#endif
 #else
   struct ieee80211_vif *vif      = NULL;
   struct ieee80211_bss_conf *bss = NULL;
@@ -628,10 +658,16 @@ static ssize_t rsi_write_frame_meas_req(struct file *file, const char __user *us
   vif = rsi_get_sta_vif(adapter);
   if (!vif)
     return -ENODEV;
-  bss                            = &vif->bss_conf;
+  bss = &vif->bss_conf;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   if (!bss->assoc) {
+#elif defined(CONFIG_STA_PLUS_AP)
+  if (!vif->cfg.assoc) {
+#else
+  if (!adapter->vifs[adapter->sc_nvifs - 1]->cfg.assoc) {
+#endif
     rsi_dbg(ERR_ZONE, "unable to send frame req in non connected state\n");
     return -EINVAL;
   }
@@ -730,7 +766,9 @@ static ssize_t rsi_write_beacon_meas_req(struct file *file, const char __user *u
   char str[32];
   struct rsi_hw *adapter = common->priv;
 #ifndef CONFIG_STA_PLUS_AP
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   struct ieee80211_bss_conf *bss = &adapter->vifs[adapter->sc_nvifs - 1]->bss_conf;
+#endif
 #else
   struct ieee80211_vif *vif      = NULL;
   struct ieee80211_bss_conf *bss = NULL;
@@ -741,7 +779,13 @@ static ssize_t rsi_write_beacon_meas_req(struct file *file, const char __user *u
   bss = &vif->bss_conf;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   if (!bss->assoc) {
+#elif defined(CONFIG_STA_PLUS_AP)
+  if (!vif->cfg.assoc) {
+#else
+  if (!adapter->vifs[adapter->sc_nvifs - 1]->cfg.assoc) {
+#endif
     rsi_dbg(ERR_ZONE, "unable to send beacon req in non connected state\n");
     return -EINVAL;
   }

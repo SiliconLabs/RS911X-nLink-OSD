@@ -33,5 +33,6 @@ struct rsi_debugfs {
 };
 int rsi_init_dbgfs(struct rsi_hw *adapter);
 void rsi_remove_dbgfs(struct rsi_hw *adapter);
+int rsi_validate_ps_params(struct rsi_common *common, int *ps_params_vals);
 #endif
 #endif

@@ -31,6 +31,7 @@ int main(int argc, char *argv[])
   struct bb_rf_param_t bb_rf_read;
   struct efuse_content_t *efuse_content;
   struct fltr_bcast bcast;
+  w_9116_features_t w_9116_features;
   int length;
   int multiple_bb_read = 0;
   //_9117_CODE_START
@@ -223,6 +224,73 @@ int main(int argc, char *argv[])
       }
       break;
     }
+    case WLAN_9116_FEATURE: {
+      if (argc < 11) {
+        printf("Usage \n");
+        printf("./onebox_util rpine0 w_9116_features pll_mode rf_type wireless_mode enable_ppe afe_type dpd "
+               "SIFSTransmitenable pwrsave_options\n");
+        printf("\x1B[31m"
+               "PLL_MODE:"
+               "\x1B[0m"
+               "0-PLLMODE0, 1-PLLMODE1, 2-PLLMODE2 \n");
+        printf("RF_TYPE[ONLY FOR 2GHz]: 0-External_RF_8111, 1-Internal_RF_9116, 2-AVIACOM_RF \n");
+        printf("WIRELESS_MODE:12 – for LP chain enable, else LP chain disable \n");
+        printf("ENABLE_PPE: 0-Disable_per_packet_TX_programming, 1-Enable_per_packet_TX_programming_mode_1, "
+               "2-Enable_per_packet_TX_programming_mode_2 \n");
+        printf("AFE: ? Default=0\n");
+        printf("DPD: ? Default=0\n");
+        printf("SIFSTransmitenable\n");
+        printf("pwrsave_options[0-3]: 0 -Disable [duty cycling & end of frame], 1-[Duty cycling Enabled], "
+               "2-[End_of_Frame] 3- Enable [Duty_cycling & End_of_frame] \n");
+        break;
+      }
+      memset(&w_9116_features, 0, sizeof(w_9116_features));
+      w_9116_features.pll_mode           = atoi(argv[3]);
+      w_9116_features.rf_type            = atoi(argv[4]);
+      w_9116_features.wireless_mode      = atoi(argv[5]);
+      w_9116_features.enable_ppe         = atoi(argv[6]);
+      w_9116_features.afe_type           = atoi(argv[7]);
+      w_9116_features.dpd                = atoi(argv[8]);
+      w_9116_features.SIFSTransmitenable = atoi(argv[9]);
+      w_9116_features.pwrsave_options    = atoi(argv[10]);
+      if (w_9116_features.pll_mode > 2 || w_9116_features.pll_mode < 0) {
+        printf("Invalid pll_mode Configuration\n");
+        printf("\x1B[31m"
+               "PLL_MODE:"
+               "\x1B[0m"
+               "0-PLLMODE0, 1-PLLMODE1, 2-PLLMODE2 \n");
+        break;
+      } else if (w_9116_features.rf_type > 2 || w_9116_features.rf_type < 0) {
+        printf("Invalid rf_type Configuration\n");
+        printf("RF_TYPE[ONLY FOR 2GHz]: 0-External_RF_8111, 1-Internal_RF_9116, 2-AVIACOM_RF \n");
+        break;
+      } else if (w_9116_features.enable_ppe > 2 || w_9116_features.enable_ppe < 0) {
+        printf("Invalid enable_ppe Configuration\n");
+        printf("ENABLE_PPE: 0-Disable_per_packet_TX_programming, 1-Enable_per_packet_TX_programming_mode_1, "
+               "2-Enable_per_packet_TX_programming_mode_2 \n");
+        break;
+      } else if (w_9116_features.dpd > 1 || w_9116_features.dpd < 0) {
+        printf("Invalid dpd Configuration\n");
+        printf("DPD: ? \n");
+        break;
+      } else if (w_9116_features.SIFSTransmitenable > 1 || w_9116_features.SIFSTransmitenable < 0) {
+        printf("Invalid SIFSTransmitenable Configuration\n");
+        printf("SIFSTransmitenable: ? \n");
+        break;
+      } else if (w_9116_features.pwrsave_options < 0) {
+        printf("Invalid pwrsave_options Configuration\n");
+        printf("pwrsave_options[0-3]: 0 -Disable [duty cycling & end of frame], 1-[Duty cycling Enabled], "
+               "2-[End_of_Frame] 3- Enable [Duty_cycling & End_of_frame] \n");
+        break;
+      }
+      ret = prepare_and_send_nl_cmd(sfd,
+                                    WLAN_9116_FEATURE,
+                                    0,
+                                    WLAN_PACKET,
+                                    (void *)&w_9116_features,
+                                    sizeof(w_9116_features));
+      break;
+    }
     default:
       return ONEBOX_STATUS_FAILURE;
   }
@@ -247,7 +315,9 @@ int getcmdnumber(char *command, char *ifName)
   } else if (!strcmp(command, "get_rssi") && !strncmp(ifName, "rpine", 5)) {
     return RSI_GET_RSSI;
   }
-  else {
+  else if (!strcmp(command, "w_9116_features") && !strncmp(ifName, "rpine0", 5)) {
+    return WLAN_9116_FEATURE;
+  } else {
     ONEBOX_PRINT("Error: Wrong command , Please follow usage...\n");
     usage();
     return ONEBOX_STATUS_FAILURE;
@@ -260,6 +330,8 @@ void usage()
   ONEBOX_PRINT("Usage:./onebox_util rpine0 addr data\n");
   ONEBOX_PRINT("Usage:./onebox_util rpine0 addr\n");
   ONEBOX_PRINT("Usage:./onebox_util rpine0 print_efuse_map\n");
+  ONEBOX_PRINT("Usage: onebox_util base_interface w_9116_features pll_mode rf_type wireless_mode enable_ppe afe_type "
+               "dpd SIFSTransmitenable pwrsave_options\n");
   return;
 }
 

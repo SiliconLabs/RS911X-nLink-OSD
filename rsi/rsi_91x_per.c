@@ -133,10 +133,13 @@ int rsi_send_rx_stats_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh)
 
 #ifndef CONFIG_STA_PLUS_AP
   struct ieee80211_vif *vif = adapter->vifs[0];
-  bool assoc                = vif && vif->bss_conf.assoc;
 #else
-  struct ieee80211_vif *sta_vif = rsi_get_sta_vif(adapter);
-  bool assoc                    = sta_vif && sta_vif->bss_conf.assoc;
+  struct ieee80211_vif *vif = rsi_get_sta_vif(adapter);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+  bool assoc = vif && vif->bss_conf.assoc;
+#else
+  bool assoc                = vif && vif->cfg.assoc;
 #endif
 
   if (common->driver_mode == E2E_MODE) {
@@ -177,7 +180,7 @@ int rsi_send_rx_stats_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh)
 #ifndef CONFIG_STA_PLUS_AP
     if (rsi_set_channel(common, channel)) {
 #else
-    if (rsi_set_channel(common, channel, sta_vif)) {
+    if (rsi_set_channel(common, channel, vif)) {
 #endif
       rsi_dbg(ERR_ZONE, "%s: Failed to set the channel\n", __func__);
       return -1;
@@ -587,7 +590,7 @@ int rsi_transmit_stats_cmd(struct rsi_hw *adapter, struct nlmsghdr *nlh, int pay
         country_code = adapter->per_params.ctry_region;
       }
 
-      if (!(common->band == NL80211_BAND_5GHZ)
+      if ((common->band != NL80211_BAND_5GHZ)
           && ((adapter->per_params.channel >= 36) || (adapter->per_params.enable_11j))) {
         rsi_dbg(ERR_ZONE, "Invalid Channel Number for Module type\n");
         return -1;

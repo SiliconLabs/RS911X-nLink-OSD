@@ -730,6 +730,10 @@ int rsi_mac80211_attach(struct rsi_common *common);
 int rsi_send_bgscan_params(struct rsi_common *common, int enable);
 int rsi_send_bgscan_probe_req(struct rsi_common *common);
 void rsi_indicate_tx_status(struct rsi_hw *common, struct sk_buff *skb, int status);
+struct sk_buff *rsi_take_eapol4_skb(struct rsi_common *common);
+void rsi_eapol4_confirm_timeout_work(struct work_struct *work);
+void rsi_start_eapol4_confirm_work(struct rsi_common *common);
+void rsi_stop_eapol4_confirm_work(struct rsi_common *common);
 bool rsi_is_cipher_wep(struct rsi_common *common);
 void rsi_core_qos_processor(struct rsi_common *common);
 void rsi_core_xmit(struct rsi_common *common, struct sk_buff *skb);
@@ -752,6 +756,7 @@ int rsi_validate_debugfs_bgscan_channels(struct rsi_common *common);
 int rsi_start_per_burst(struct rsi_hw *adapter);
 void init_traffic_timer(struct rsi_hw *adapter, unsigned long timeout);
 void check_traffic_pwr_save(struct rsi_hw *adapter);
+int rsi_send_common_dev_params(struct rsi_common *common);
 #ifdef CONFIG_RSI_WOW
 int rsi_send_wowlan_request(struct rsi_common *common, u16 flags, u16 sleep_status);
 #endif

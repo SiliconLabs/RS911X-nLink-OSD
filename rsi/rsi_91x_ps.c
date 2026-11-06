@@ -95,7 +95,9 @@ void rsi_enable_ps(struct rsi_hw *adapter)
     rsi_dbg(ERR_ZONE, "%s: Failed to send PS request to device\n", __func__);
     return;
   }
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+  adapter->user_ps_en = 1;
+#endif
   rsi_modify_ps_state(adapter, PS_ENABLE_REQ_SENT);
 }
 
@@ -112,7 +114,10 @@ void rsi_disable_ps(struct rsi_hw *adapter)
     rsi_dbg(ERR_ZONE, "%s: Failed to send PS request to device\n", __func__);
     return;
   }
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+  if (adapter->ps_info.monitor_interval == 0 && adapter->priv->disable_ps_from_lmac == false)
+    adapter->user_ps_en = 0;
+#endif
   rsi_modify_ps_state(adapter, PS_DISABLE_REQ_SENT);
 }
 
@@ -122,7 +127,7 @@ static void traffic_timer_callback(struct rsi_hw *adapter)
 #else
 static void traffic_timer_callback(struct timer_list *t)
 {
-  struct rsi_hw *adapter    = from_timer(adapter, t, traffic_timer);
+  struct rsi_hw *adapter    = rsi_timer_from_timer(adapter, t, traffic_timer);
 #endif
   struct rsi_common *common   = adapter->priv;
   struct rsi_ps_info *ps_info = &adapter->ps_info;
@@ -138,7 +143,11 @@ static void traffic_timer_callback(struct timer_list *t)
     return;
   }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
   assoc = vif && vif->bss_conf.assoc;
+#else
+  assoc                     = vif && vif->cfg.assoc;
+#endif
 
   if (!assoc) {
     rsi_dbg(INFO_ZONE, "STATION IS NOT IN CONNECTED STATE\n");
@@ -199,7 +208,7 @@ void init_traffic_timer(struct rsi_hw *adapter, unsigned long timeout)
 {
   if (timer_pending(&adapter->traffic_timer)) {
     rsi_dbg(ERR_ZONE, "%s : Timer Pending. This Case Should not occur\n", __func__);
-    del_timer(&adapter->traffic_timer);
+    rsi_timer_del(&adapter->traffic_timer);
   }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
   init_timer(&adapter->traffic_timer);

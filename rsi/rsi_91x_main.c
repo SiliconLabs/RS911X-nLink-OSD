@@ -271,6 +271,12 @@ MODULE_PARM_DESC(pta_config, "\nPTA configuration \n\
 '2'  - PTA_CONFIG_2\n\
 '3'  - PTA_CONFIG_3\n");
 
+bool disable_bb_pwrsave;
+module_param(disable_bb_pwrsave, bool, S_IRUGO);
+MODULE_PARM_DESC(disable_bb_pwrsave, "\nBaseband Powersave Configuration\n\
+'0'  - Enable\n\
+'1'  - Disable\n");
+
 
 u16 rsi_zone_enabled = ERR_ZONE;
 module_param(rsi_zone_enabled, ushort, S_IRUGO);
@@ -325,6 +331,12 @@ bool enable_encap_offload;
 module_param(enable_encap_offload, bool, S_IRUGO);
 MODULE_PARM_DESC(enable_encap_offload, "\nenable_encap_offload\n\
 		'0' - Disable \n'1' - Enable\n");
+
+bool sw_bmiss_enable;
+module_param(sw_bmiss_enable, bool, S_IRUGO);
+MODULE_PARM_DESC(sw_bmiss_enable, "\nSoftware beacon miss enable\n\
+		'0' - Disable (HW beacon miss / CONNECTION_MONITOR)\n\
+		'1' - Enable (allow beacons to host, skip CONNECTION_MONITOR)\n");
 
 /**
  * rsi_dbg() - This function outputs informational messages.
@@ -626,7 +638,11 @@ static void rsi_tx_scheduler_thread(struct rsi_common *common)
       set_clr_tx_intention(common, WLAN_ID, 0);
     }
   } while (atomic_read(&common->tx_thread.thread_done) == 0);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
   complete_and_exit(&common->tx_thread.completion, 0);
+#else
+  kthread_complete_and_exit(&common->tx_thread.completion, 0);
+#endif
 }
 
 #ifdef CONFIG_SDIO_INTR_POLL
@@ -770,10 +786,18 @@ struct rsi_hw *rsi_91x_init(void)
   sema_init(&common->tx_access_lock, 1);
   init_waitqueue_head(&common->techs[WLAN_ID].tx_access_event);
   init_waitqueue_head(&common->techs[COMMON_ID].tx_access_event);
+  rsi_init_event(&common->rsi_bt_per_event);
+
 #ifdef CONFIG_RSI_COEX_MODE
   init_waitqueue_head(&common->techs[BT_ZB_ID].tx_access_event);
 #endif
   common->scan_workqueue = create_singlethread_workqueue("rsi_scan_worker");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0))
+  /* Init here so rsi_91x_deinit can always cancel safely. mac80211 attach
+   * (and thus the old INIT site) is skipped in RF_EVAL/PER mode.
+   */
+  INIT_DELAYED_WORK(&common->csa_dwork, rsi_csa_dwork_fn);
+#endif
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 20, 17) || defined(OFFLOAD_SCAN_TO_DEVICE)
   rsi_init_event(&common->probe_cfm_event);
   rsi_init_event(&common->chan_change_event);
@@ -838,10 +862,12 @@ struct rsi_hw *rsi_91x_init(void)
   common->enabled_uapsd             = enabled_uapsd;
   common->max_sp_len                = max_sp_len;
   common->pta_config                = pta_config;
+  common->disable_bb_pwrsave        = disable_bb_pwrsave;
   common->xtal_good_time            = xtal_good_time;
   common->rx_data_inactive_interval = rx_data_inactive_interval;
   common->default_deep_sleep_enable = default_deep_sleep_enable;
   common->enable_encap_offload      = enable_encap_offload;
+  common->sw_bmiss_enable           = sw_bmiss_enable;
   obm_configure_region(adapter, country_code);
 
   if (rsi_create_kthread(common, &common->tx_thread, rsi_tx_scheduler_thread, "Tx-Thread")) {
@@ -872,6 +898,7 @@ struct rsi_hw *rsi_91x_init(void)
 #else
   timer_setup(&common->roc_timer, rsi_roc_timeout, 0);
 #endif
+  INIT_DELAYED_WORK(&common->eapol4_confirm_work, rsi_eapol4_confirm_timeout_work);
   init_completion(&common->wlan_init_completion);
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 20, 17) || defined(OFFLOAD_SCAN_TO_DEVICE)
   rsi_init_event(&common->chan_set_event);
@@ -879,6 +906,8 @@ struct rsi_hw *rsi_91x_init(void)
   if (common->driver_mode == RF_EVAL_MODE_ON)
     rsi_init_event(&common->chan_set_event);
 #endif
+  /* Initialize CSA event */
+  rsi_init_event(&common->csa_complete_event);
 
   common->init_done = true;
   if (nl_sk_init(adapter))
@@ -902,9 +931,23 @@ void rsi_91x_deinit(struct rsi_hw *adapter)
 {
   struct rsi_common *common = adapter->priv;
   u8 ii;
+  struct sk_buff *eapol4_skb;
 
   rsi_dbg(INFO_ZONE, "%s: Deinit core module...\n", __func__);
 
+  eapol4_skb = rsi_take_eapol4_skb(common);
+  rsi_stop_eapol4_confirm_work(common);
+  if (eapol4_skb) {
+    if (adapter->hw) {
+      ieee80211_free_txskb(adapter->hw, eapol4_skb);
+    } else {
+      dev_kfree_skb_any(eapol4_skb);
+    }
+  }
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0))
+  cancel_delayed_work_sync(&common->csa_dwork);
+#endif
   flush_workqueue(common->scan_workqueue);
   destroy_workqueue(common->scan_workqueue);
   rsi_kill_thread(&common->tx_thread);

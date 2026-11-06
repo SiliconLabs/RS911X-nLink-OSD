@@ -267,6 +267,15 @@ struct bb_rf_param_t {
   unsigned char soft_reset;
   unsigned char protocol_id;
 };
+
+struct bb_rf_param_bt_t {
+  unsigned char value; //type is present here
+  unsigned char no_of_fields;
+  unsigned char no_of_values;
+  unsigned char soft_reset;
+  unsigned short Data[128];
+};
+
 /* Wlan Gain Table related define*/
 #define UPDATE_WLAN_GAIN_TABLE   78
 #define MAX_WLAN_GAIN_TABLE_SIZE (512 - 128 - 16 - 20 - 8)
@@ -292,6 +301,19 @@ struct fltr_bcast {
   unsigned char filter_bcast_tim_till_next_cmd;
 };
 
+#define WLAN_9116_FEATURE 68
+/* Layout matches kernel struct rsi_9116_features */
+typedef struct wlan_9116_features_s {
+  u_int8_t pll_mode;
+  u_int8_t rf_type;
+  u_int8_t wireless_mode;
+  u_int8_t afe_type;
+  u_int8_t enable_ppe;
+  u_int8_t dpd;
+  uint32_t SIFSTransmitenable; // maps to sifs_tx_enable
+  uint32_t pwrsave_options;    // maps to ps_options
+} w_9116_features_t;
+
 int gain_table_sckt_creation(update_wlan_gain_table_t table_info, int sfd);
 int update_wlan_gain_table(int argc, char *argv[], char *ifName, int sfd);
 int update_wlan_region_based_struct(int argc, char *argv[], char *ifName, int sfd);
@@ -299,6 +321,8 @@ struct nlmsghdr *common_recv_mesg_wrapper(int sock_fd, int len);
 void usage();
 int getcmdnumber(char *command, char *ifName);
 int rsi_print_efuse_map(struct efuse_content_t *efuse_content, int sock_fd);
+int ble_per_transmit_wrapper(struct bb_rf_param_bt_t bb_rf_params, int cmd, int sock_fd);
+int bt_per_cmd_wrapper(struct bb_rf_param_bt_t bb_rf_params, int cmd, int sock_fd, unsigned short nl_pkt_type);
 int per_recv_send_wrapper(per_stats *sta_info,
                           int cmd,
                           int len,
@@ -311,6 +335,12 @@ int per_transmit_packet_wrapper(per_packet_t per_packet, int cmd, int sock_fd);
 int per_transmit_wrapper(per_params_t per_params, int cmd, int sock_fd);
 int send_get_rssi_frame_to_drv(int sock_fd);
 int send_filter_broadcast_frame_to_drv(struct fltr_bcast bcast, int sock_fd);
+int prepare_and_send_nl_cmd(int sock_fd,
+                            unsigned short cmd_type,
+                            unsigned char rd_wr,
+                            unsigned char msg_type,
+                            void *ptr,
+                            int len);
 #define ONEBOX_STATUS_FAILURE      -1
 #define ONEBOX_STATUS_SUCCESS      0
 #define ONEBOX_STATUS              int_32

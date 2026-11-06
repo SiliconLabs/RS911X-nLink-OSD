@@ -25,7 +25,7 @@ void rsi_usb_suspend_timeout(struct rsi_common *common)
 #else
 static void rsi_usb_suspend_timeout(struct timer_list *timer)
 {
-  struct rsi_common *common = from_timer(common, timer, suspend_timer);
+  struct rsi_common *common = rsi_timer_from_timer(common, timer, suspend_timer);
 #endif
   struct rsi_hw *adapter = common->priv;
 
@@ -1082,10 +1082,10 @@ static int rsi_suspend(struct usb_interface *pfunction, pm_message_t message)
       goto err;
     }
     rsi_dbg(MGMT_DEBUG_ZONE, "Killing URB's\n");
-    if (&dev->rx_cb[0]) /* Kill URB */
+    if (dev->rx_cb[0].rx_urb) /* Kill URB */
       usb_kill_urb(dev->rx_cb[0].rx_urb);
 #if defined(CONFIG_RSI_BT_ALONE) || defined(CONFIG_RSI_COEX_MODE)
-    if (&dev->rx_cb[1]) /* Kill URB */
+    if (dev->rx_cb[1].rx_urb) /* Kill URB */
       usb_kill_urb(dev->rx_cb[1].rx_urb);
 #endif
     common->common_hal_tx_access = false;
@@ -1096,7 +1096,7 @@ static int rsi_suspend(struct usb_interface *pfunction, pm_message_t message)
       rsi_dbg(INIT_ZONE, "Init USB suspend timer\n");
       if (timer_pending(timer)) {
         rsi_dbg(ERR_ZONE, "%s : Timer Pending. This Case Should not occur\n", __func__);
-        del_timer(timer);
+        rsi_timer_del(timer);
       }
 #if KERNEL_VERSION(4, 15, 0) > LINUX_VERSION_CODE
       init_timer(timer);

@@ -30,11 +30,20 @@
 #define TX_STATUS         0xE
 #define GET_DRV_COEX_MODE 0xF
 
+#define BT_E2E_MODE_ON  1
+#define RF_EVAL_MODE_ON 2
+
 /* RX frame types */
 #define RESULT_CONFIRM 0x80
 #define BT_PER         0x10
 #define BT_BER         0x11
 #define BT_CW          0x12
+
+#define PER_BR_EDR_TRANSMIT 0x15
+#define PER_BR_EDR_RECEIVE  0x16
+
+#define TX_IS_IN_PROG     -1
+#define TX_IS_NOT_IN_PROG 1
 
 #define RSI_DMA_ALIGN                8
 #define REQUIRED_HEADROOM_FOR_BT_HAL (16 + RSI_DMA_ALIGN)
@@ -123,9 +132,27 @@ typedef struct bt_stats_s {
   unsigned short id_pkts_rcvd;
 } bt_stats_t;
 
+/* PER stats layout (same as apps/bt_util.h bt_per_stats_t) */
+typedef struct bt_per_stats_s {
+  unsigned short crc_fail;
+  unsigned short crc_pass;
+  unsigned short tx_aborts;
+  unsigned short cca_stk;
+  unsigned short cca_not_stk;
+  unsigned short fls_rx_start;
+  unsigned short cca_idle;
+  unsigned short tx_dones;
+  signed short int rssi;
+  unsigned short id_pkts_rcvd;
+} bt_per_stats_t;
+
 int rsi_hci_attach(struct rsi_common *common);
 void rsi_hci_detach(struct rsi_common *common);
 int rsi_hci_recv_pkt(struct rsi_common *common, u8 *pkt);
+int rsi_send_rfmode_frame(struct rsi_common *common);
+int rsi_process_rx_bt_e2e_stats(struct rsi_common *common, bt_stats_t bt_stats);
+int rsi_process_rx_bt_per_stats(struct rsi_common *common, bt_per_stats_t bt_per_stats);
+int rsi_process_rx_bt_ble_gain_table_update(struct rsi_common *common, unsigned short status);
 
 #ifdef CONFIG_RSI_BT_ANDROID
 int rsi_bdroid_init(struct rsi_common *common);

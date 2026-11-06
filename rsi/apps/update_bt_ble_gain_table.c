@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include "per_util.h"
 #include "bt_util.h"
 
 #define BT_BLE_GAIN_TABLE_UPDATE 0x06

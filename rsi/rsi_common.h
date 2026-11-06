@@ -17,6 +17,10 @@
 #define SNIFFER_MODE       7
 #define PER_MODE_EN        1
 
+#define RF_EVAL_CLASSIC   0x01
+#define RF_EVAL_LE        0x02
+#define RF_EVAL_DUAL_MODE 0x03
+
 static inline int rsi_init_event(struct rsi_event *pevent)
 {
   atomic_set(&pevent->event_condition, 1);
@@ -103,6 +107,9 @@ enum countrycode {
 
 int rsi_load_radio_caps(struct rsi_common *common);
 void rsi_mac80211_detach(struct rsi_hw *hw);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0))
+void rsi_csa_dwork_fn(struct work_struct *work);
+#endif
 u16 rsi_get_connected_channel(struct rsi_hw *adapter);
 struct rsi_hw *rsi_91x_init(void);
 void rsi_91x_deinit(struct rsi_hw *adapter);
@@ -114,6 +121,7 @@ struct rsi_sta *rsi_find_sta(struct rsi_common *common, u8 *mac_addr);
 void rsi_init_bcn_timer(struct rsi_common *common);
 void rsi_del_bcn_timer(struct rsi_common *common);
 void rsi_bcn_scheduler_thread(struct rsi_common *common);
+int rsi_response(struct rsi_hw *adapter, struct nlmsghdr *nlh, int status);
 #ifdef CONFIG_SDIO_INTR_POLL
 void init_sdio_intr_status_poll_thread(struct rsi_common *common);
 #endif
@@ -133,4 +141,28 @@ int set_clr_tx_intention(struct rsi_common *common, u8 proto_id, u8 set);
 void set_host_status(int value, struct rsi_common *common);
 int get_device_status(struct rsi_common *common);
 int rsi_send_ack_for_ulp_entry(struct rsi_common *common);
+
+/* Macros for support in higher kernel */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+#define BSS_ASSOC bss->assoc
+#define AID       bss->aid
+#else
+#define BSS_ASSOC vif->cfg.assoc
+#define AID       vif->cfg.aid
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+#define HT_CAP sta->ht_cap
+#define SUPP_RATES sta->supp_rates
+#else
+#define HT_CAP     sta->deflink.ht_cap
+#define SUPP_RATES sta->deflink.supp_rates
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 9, 0)
+#define rsi_bss_get_channel(bss) ((bss)->chandef.chan)
+#else
+#define rsi_bss_get_channel(bss) ((bss)->chanreq.oper.chan)
+#endif
+
 #endif

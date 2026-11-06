@@ -488,7 +488,6 @@ int rsi_send_data_pkt(struct rsi_common *common, struct sk_buff *skb)
   info = IEEE80211_SKB_CB(skb);
   if (!info->control.vif)
     goto err;
-  bss       = &info->control.vif->bss_conf;
   tx_params = (struct skb_info *)info->driver_data;
 
   header_size = tx_params->internal_hdr_size;
@@ -505,8 +504,9 @@ int rsi_send_data_pkt(struct rsi_common *common, struct sk_buff *skb)
     status = -ENOSPC;
     goto err;
   }
+  bss = &vif->bss_conf;
   if (vif->type == NL80211_IFTYPE_STATION) {
-    if (!bss->assoc)
+    if (!BSS_ASSOC)
       goto err;
     if (!(tx_params->flags & ENCAP_OFFLOAD_EN) && !ether_addr_equal(wh->addr1, bss->bssid))
       goto err;
@@ -547,6 +547,7 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
   struct xtended_desc *xtend_desc = NULL;
   struct ieee80211_vif *vif       = NULL;
   int wait_for_tx_cnfm            = 0;
+  int eapol4_held                 = 0;
 
   if (!skb)
     return 0;
@@ -570,6 +571,33 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
   if (common->iface_down)
     goto out;
 
+  desc       = (__le16 *)skb->data;
+  xtend_desc = (struct xtended_desc *)&skb->data[FRAME_DESC_SZ];
+
+  /*
+   * EAPOL Msg4: hold skb until LMAC TX confirm so mac80211 gets real
+   * AP ACK status (same pattern as NULLDATA). Host write success alone
+   * must not be reported as IEEE80211_TX_STAT_ACK.
+   */
+  if (xtend_desc->confirm_frame_type == EAPOL4_CONFIRM) {
+    struct sk_buff *stale;
+
+    /*
+     * Claim any prior pending EAPOL4 before sending this one.
+     * Do not publish the new skb until host TX succeeds (see out:),
+     * so a late confirm for the old frame cannot steal the new skb.
+     * Non-sync cancel: may run under tx_lock.
+     */
+    stale = rsi_take_eapol4_skb(common);
+    if (stale) {
+      rsi_dbg(ERR_ZONE, "Dropping stale pending EAPOL4 skb\n");
+      cancel_delayed_work(&common->eapol4_confirm_work);
+      rsi_indicate_tx_status(common->priv, stale, -ETIMEDOUT);
+    }
+    wait_for_tx_cnfm = 1;
+    eapol4_held      = 1;
+  }
+
   if (tx_params->flags & ENCAP_OFFLOAD_EN)
     goto snd_encap_data;
 
@@ -587,8 +615,6 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
     status = -ENOSPC;
     goto out;
   }
-  desc       = (__le16 *)skb->data;
-  xtend_desc = (struct xtended_desc *)&skb->data[FRAME_DESC_SZ];
 
   if ((ieee80211_is_qos_nullfunc(wh->frame_control)) && (info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS)) {
     struct rsi_sta *sta = NULL;
@@ -620,7 +646,7 @@ int rsi_send_mgmt_pkt(struct rsi_common *common, struct sk_buff *skb)
   }
   /* Indicate to firmware to give cfm */
   if (ieee80211_is_probe_req(wh->frame_control)) {
-    if (!bss->assoc) {
+    if (!BSS_ASSOC) {
       rsi_dbg(INFO_ZONE, "%s: blocking mgmt queue\n", __func__);
       desc[1] |= cpu_to_le16(RSI_DESC_REQUIRE_CFM_TO_HOST);
       xtend_desc->confirm_frame_type = PROBEREQ_CONFIRM;
@@ -660,6 +686,19 @@ snd_encap_data:
 out:
   if (!wait_for_tx_cnfm) {
     rsi_indicate_tx_status(common->priv, skb, status);
+  } else if (eapol4_held) {
+    if (status) {
+      /* Host path failed - never published eapol4_skb; complete now */
+      rsi_indicate_tx_status(common->priv, skb, status);
+    } else {
+      /*
+       * Packet with LMAC; publish skb then arm watchdog. Ordering matters:
+       * publish before start so timeout cannot run against a NULL slot
+       * while the frame is still outstanding.
+       */
+      common->eapol4_skb = skb;
+      rsi_start_eapol4_confirm_work(common);
+    }
   }
   return status;
 }
@@ -743,9 +782,25 @@ int rsi_prepare_beacon(struct rsi_common *common, struct sk_buff *skb, struct ie
   u16 tim_offset                = 0;
 
 #ifndef CONFIG_STA_PLUS_AP
-  mac_bcn = ieee80211_beacon_get_tim(adapter->hw, adapter->vifs[adapter->sc_nvifs - 1], &tim_offset, NULL);
+  mac_bcn = ieee80211_beacon_get_tim(adapter->hw,
+                                     adapter->vifs[adapter->sc_nvifs - 1],
+                                     &tim_offset,
+                                     NULL
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+                                     ,
+                                     0 /*This is link_id parameter which we are not using keeping it as 0 */
+#endif
+  );
 #else
-  mac_bcn = ieee80211_beacon_get_tim(adapter->hw, vif, &tim_offset, NULL);
+  mac_bcn = ieee80211_beacon_get_tim(adapter->hw,
+                                     vif,
+                                     &tim_offset,
+                                     NULL
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+                                     ,
+                                     0 /*This is link_id parameter which we are not using keeping it as 0 */
+#endif
+  );
 #endif
   if (!mac_bcn) {
     rsi_dbg(ERR_ZONE, "Failed to get beacon from mac80211\n");
@@ -805,10 +860,10 @@ static void bl_cmd_timeout(unsigned long priv)
 #else
 static void bl_cmd_timeout(struct timer_list *t)
 {
-  struct rsi_hw *adapter = from_timer(adapter, t, bl_cmd_timer);
+  struct rsi_hw *adapter = rsi_timer_from_timer(adapter, t, bl_cmd_timer);
 #endif
   adapter->blcmd_timer_expired = 1;
-  del_timer(&adapter->bl_cmd_timer);
+  rsi_timer_del(&adapter->bl_cmd_timer);
 }
 
 /**
@@ -822,7 +877,7 @@ static int bl_start_cmd_timer(struct rsi_hw *adapter, u32 timeout)
 {
   if (timer_pending(&adapter->bl_cmd_timer)) {
     rsi_dbg(ERR_ZONE, "%s : Timer Pending. This Case Should not occur\n", __func__);
-    del_timer(&adapter->bl_cmd_timer);
+    rsi_timer_del(&adapter->bl_cmd_timer);
   }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
   init_timer(&adapter->bl_cmd_timer);
@@ -849,7 +904,7 @@ static int bl_stop_cmd_timer(struct rsi_hw *adapter)
 {
   adapter->blcmd_timer_expired = 0;
   if (timer_pending(&adapter->bl_cmd_timer))
-    del_timer(&adapter->bl_cmd_timer);
+    rsi_timer_del(&adapter->bl_cmd_timer);
 
   return 0;
 }

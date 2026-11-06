@@ -472,9 +472,9 @@ void rsi_core_xmit(struct rsi_common *common, struct sk_buff *skb)
       common->start_bgscan   = 0;
       rsi_dbg(MGMT_DEBUG_ZONE, "<==== Sending ASSOCIATION REQUEST Packet ====>\n");
 #ifndef CONFIG_STA_PLUS_AP
-      rsi_send_sta_notify_frame(common, STA_OPMODE, STA_CONNECTED, bss->bssid, bss->qos, bss->aid, 0);
+      rsi_send_sta_notify_frame(common, STA_OPMODE, STA_CONNECTED, bss->bssid, bss->qos, AID, 0);
 #else
-      rsi_send_sta_notify_frame(common, STA_OPMODE, STA_CONNECTED, bss->bssid, bss->qos, bss->aid, 0, vif);
+      rsi_send_sta_notify_frame(common, STA_OPMODE, STA_CONNECTED, bss->bssid, bss->qos, AID, 0, vif);
 #endif
     }
     q_num         = MGMT_SOFT_Q;

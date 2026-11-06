@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "per_util.h"
+#include "bt_util.h"
 #include <unistd.h>
 #include <linux/wireless.h>
 
@@ -93,6 +94,40 @@ int gain_table_sckt_creation(update_wlan_gain_table_t table_info, int sfd)
   ret = common_send_mesg_wrapper(sfd, dest_addr, nlh);
   if (ret < 0)
     close(sfd);
+  free(nlh);
+  return ret;
+}
+
+int ble_per_transmit_wrapper(struct bb_rf_param_bt_t bb_rf_params, int cmd, int sock_fd)
+{
+  return bt_per_cmd_wrapper(bb_rf_params, cmd, sock_fd, BLE_PACKET);
+}
+
+int bt_per_cmd_wrapper(struct bb_rf_param_bt_t bb_rf_params, int cmd, int sock_fd, unsigned short nl_pkt_type)
+{
+  struct sockaddr_nl dest_addr;
+  struct nlmsghdr *nlh         = NULL;
+  struct rsi_nl_desc *nlh_desc = NULL;
+  int ret, len;
+
+  len = sizeof(bb_rf_params);
+  memset(&dest_addr, 0, sizeof(dest_addr));
+  dest_addr.nl_family = AF_NETLINK;
+  dest_addr.nl_pid    = 0; /* For Linux kernel */
+  dest_addr.nl_groups = 0; /* unicast */
+  nlh                 = (struct nlmsghdr *)malloc(NLMSG_SPACE(len + NL_DATA_DESC_SZ));
+  memset(nlh, 0, NLMSG_SPACE(len + NL_DATA_DESC_SZ));
+  nlh->nlmsg_len         = NLMSG_SPACE(len + NL_DATA_DESC_SZ);
+  nlh_desc               = (struct rsi_nl_desc *)NLMSG_DATA(nlh);
+  nlh_desc->desc_word[0] = cmd;
+  nlh_desc->desc_word[1] = len;
+  nlh->nlmsg_pid         = getpid();
+  nlh->nlmsg_flags       = 0;
+  nlh->nlmsg_type        = nl_pkt_type;
+  memcpy(NLMSG_DATA(nlh) + NL_DATA_DESC_SZ, &bb_rf_params, len);
+  ret = common_send_mesg_wrapper(sock_fd, dest_addr, nlh);
+  if (ret < 0)
+    close(sock_fd);
   free(nlh);
   return ret;
 }
@@ -262,6 +297,43 @@ int send_filter_broadcast_frame_to_drv(struct fltr_bcast bcast, int sock_fd)
   ret = common_send_mesg_wrapper(sock_fd, dest_addr, nlh);
   if (ret < 0)
     close(sock_fd);
+  free(nlh);
+  return ret;
+}
+
+int prepare_and_send_nl_cmd(int sock_fd,
+                            unsigned short cmd_type,
+                            unsigned char rd_wr,
+                            unsigned char msg_type,
+                            void *ptr,
+                            int len)
+{
+  struct sockaddr_nl dest_addr;
+  struct nlmsghdr *nlh         = NULL;
+  struct rsi_nl_desc *nlh_desc = NULL;
+  int ret;
+
+  memset(&dest_addr, 0, sizeof(dest_addr));
+  dest_addr.nl_family = AF_NETLINK;
+  dest_addr.nl_pid    = 0; /* For Linux kernel */
+  dest_addr.nl_groups = 0; /* unicast */
+  nlh                 = (struct nlmsghdr *)malloc(NLMSG_SPACE(len + NL_DATA_DESC_SZ));
+  if (!nlh) {
+    printf("malloc failed %s\n", __func__);
+    return 0;
+  }
+  memset(nlh, 0, NLMSG_SPACE(len + NL_DATA_DESC_SZ));
+  nlh->nlmsg_len         = NLMSG_SPACE(len + NL_DATA_DESC_SZ);
+  nlh_desc               = (struct rsi_nl_desc *)NLMSG_DATA(nlh);
+  nlh_desc->desc_word[0] = cmd_type;
+  nlh->nlmsg_pid         = getpid();
+  nlh->nlmsg_flags       = rd_wr;
+  nlh->nlmsg_type        = (unsigned short)msg_type;
+  memcpy(NLMSG_DATA(nlh) + NL_DATA_DESC_SZ, ptr, len);
+  ret = common_send_mesg_wrapper(sock_fd, dest_addr, nlh);
+  if (ret < 0)
+    close(sock_fd);
+
   free(nlh);
   return ret;
 }

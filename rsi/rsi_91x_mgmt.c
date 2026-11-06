@@ -4,6 +4,7 @@
  */
 
 #include <linux/etherdevice.h>
+#include <linux/atomic.h>
 #include "rsi_mgmt.h"
 #include "rsi_common.h"
 #include "rsi_ps.h"
@@ -719,9 +720,13 @@ int rsi_send_internal_mgmt_frame(struct rsi_common *common, struct sk_buff *skb)
   tx_params = (struct skb_info *)&IEEE80211_SKB_CB(skb)->driver_data;
   tx_params->flags |= INTERNAL_MGMT_PKT;
   skb->priority = MGMT_SOFT_Q;
-  if (skb->data[2] == PEER_NOTIFY)
-    skb_queue_head(&common->tx_queue[MGMT_SOFT_Q], skb);
-  else
+  if (skb->data[2] == PEER_NOTIFY) {
+    if (skb->data[22] & BIT(0)) {
+      skb_queue_head(&common->tx_queue[MGMT_SOFT_Q], skb);
+    } else {
+      skb_queue_tail(&common->tx_queue[MGMT_SOFT_Q], skb);
+    }
+  } else
     skb_queue_tail(&common->tx_queue[MGMT_SOFT_Q], skb);
   rsi_set_event(&common->tx_thread.event);
   return 0;
@@ -895,7 +900,12 @@ static int rsi_mgmt_pkt_to_core(struct rsi_common *common, u8 *msg, s32 msg_len)
   rx_params->channel = rsi_get_channel(msg);
   rsi_dbg(MGMT_RX_ZONE, "%s: rssi=%d channel=%d\n", __func__, rx_params->rssi, rx_params->channel);
   wlh = (struct ieee80211_hdr *)skb->data;
-  rsi_dbg(MGMT_RX_ZONE, "RX Dot11 Mgmt Pkt Type: %s\n", dot11_pkt_type(wlh->frame_control));
+  rsi_dbg(MGMT_RX_ZONE,
+          "RX Dot11 Mgmt Pkt Type: %s addr = %pM  rssi = %d channel = %d\n",
+          dot11_pkt_type(wlh->frame_control),
+          wlh->addr2,
+          rx_params->rssi,
+          rx_params->channel);
   if (ieee80211_is_auth(wlh->frame_control)) {
     rsi_dbg(MGMT_DEBUG_ZONE, "<==== Recvd AUTHENTICATION Packet ====>\n");
     rsi_hex_dump(MGMT_DEBUG_ZONE, "AUTH-FRAME", skb->data, skb->len);
@@ -906,6 +916,12 @@ static int rsi_mgmt_pkt_to_core(struct rsi_common *common, u8 *msg, s32 msg_len)
     rsi_dbg(MGMT_DEBUG_ZONE, "<==== Recvd DE-AUTH Packet ====>\n");
     rsi_hex_dump(MGMT_DEBUG_ZONE, "DE-AUTH FRAME", skb->data, skb->len);
   }
+
+  if (common->scan_in_prog) {
+    if ((ieee80211_is_beacon(wlh->frame_control)) || (ieee80211_is_probe_resp(wlh->frame_control)))
+      common->beacon_recvd_on_ch = true;
+  }
+
   rsi_indicate_pkt_to_os(common, skb);
 
   return 0;
@@ -976,8 +992,8 @@ int rsi_send_sta_notify_frame(struct rsi_common *common,
       peer_notify->command |= cpu_to_le16(RSI_ADD_PEER);
       common->peer_notify_state = true;
       if (sta != NULL) {
-        peer_notify->mpdu_density = cpu_to_le16(mpdu_density_map[sta->ht_cap.ampdu_density]);
-        peer_notify->sta_flags    = cpu_to_le32((sta->ht_cap.ampdu_factor << 2) | ((qos_enable) ? 1 : 0));
+        peer_notify->mpdu_density = cpu_to_le16(mpdu_density_map[HT_CAP.ampdu_density]);
+        peer_notify->sta_flags    = cpu_to_le32((HT_CAP.ampdu_factor << 2) | ((qos_enable) ? 1 : 0));
       }
       break;
     case STA_DISCONNECTED:
@@ -1343,10 +1359,12 @@ int rsi_send_common_dev_params(struct rsi_common *common)
 		 * BIT(11)    is used for Airplane mode,
 		 * BIT(12)    is used for AARF_RATE_BLOCK_EN,
 		 * BIT(14:13) are used for PTA config.
+		 * BIT(15)    is used for baseband pwrsave config.
 		 */
     dev_cfgs->features_9116 = (common->ext_opt & 0xF) | (common->host_intf_on_demand << 4)
                               | ((common->crystal_as_sleep_clk & 0x3) << 5) | (common->sleep_ind_gpio_sel << 7)
-                              | (common->feature_bitmap_9116 << 8) | (common->pta_config << 13);
+                              | (common->feature_bitmap_9116 << 8) | (common->pta_config << 13)
+                              | (common->disable_bb_pwrsave << 15);
     dev_cfgs->dev_ble_roles = common->ble_roles;
     /* In bt_bdr, bt_bdr_mode used a byte[0:7],
 		 * three_wire_coex use one bit [8]. Module param of 2 byte
@@ -2044,9 +2062,9 @@ int rsi_send_auto_rate_request(struct rsi_common *common,
     is_sgi                         = vif_info->sgi;
 #endif
   } else {
-    rate_bitmap = sta->supp_rates[band];
-    is_ht       = sta->ht_cap.ht_supported;
-    if ((sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_20) || (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40))
+    rate_bitmap = SUPP_RATES[band];
+    is_ht       = HT_CAP.ht_supported;
+    if ((HT_CAP.cap & IEEE80211_HT_CAP_SGI_20) || (HT_CAP.cap & IEEE80211_HT_CAP_SGI_40))
       is_sgi = true;
   }
   if (band == NL80211_BAND_5GHZ) {
@@ -2517,7 +2535,7 @@ void rsi_inform_bss_status(struct rsi_common *common,
     if (opmode == STA_OPMODE)
       common->hw_data_qs_blocked = true;
     if (common->priv->traffic_timer.function) {
-      del_timer(&common->priv->traffic_timer);
+      rsi_timer_del(&common->priv->traffic_timer);
       rsi_dbg(INFO_ZONE, "Removed Traffic Timer\n");
     }
 #ifdef CONFIG_RSI_WOW
@@ -2576,6 +2594,79 @@ static int rsi_eeprom_read(struct rsi_common *common)
   skb_put(skb, FRAME_DESC_SZ);
 
   return rsi_send_internal_mgmt_frame(common, skb);
+}
+
+/**
+ * rsi_take_eapol4_skb() - Atomically claim ownership of the pending EAPOL4 skb.
+ * Only the caller that receives a non-NULL skb may indicate TX status or free it.
+ *
+ * @common: Pointer to the driver private structure.
+ *
+ * Return: Pending skb, or NULL if already claimed by another context.
+ */
+struct sk_buff *rsi_take_eapol4_skb(struct rsi_common *common)
+{
+  return xchg(&common->eapol4_skb, NULL);
+}
+
+/**
+ * rsi_eapol4_confirm_timeout_work() - Fired if LMAC never sends EAPOL4 TX confirm.
+ * Runs in process context via delayed_work. Reports TX failure and forces
+ * connection loss.
+ *
+ * @work: Embedded delayed_work work_struct.
+ */
+void rsi_eapol4_confirm_timeout_work(struct work_struct *work)
+{
+  struct rsi_common *common = container_of(work, struct rsi_common, eapol4_confirm_work.work);
+  struct rsi_hw *adapter    = common->priv;
+  struct sk_buff *skb;
+#ifdef CONFIG_STA_PLUS_AP
+  struct ieee80211_vif *vif;
+#endif
+
+  skb = rsi_take_eapol4_skb(common);
+  if (!skb) {
+    return;
+  }
+
+  rsi_dbg(ERR_ZONE,
+          "EAPOL4 confirm timeout (%u ms) - LMAC did not respond, triggering connection loss\n",
+          EAPOL4_CONFIRM_TIMEOUT_MS);
+
+  rsi_indicate_tx_status(adapter, skb, -ETIMEDOUT);
+
+#ifndef CONFIG_STA_PLUS_AP
+  if (adapter->sc_nvifs) {
+    ieee80211_connection_loss(adapter->vifs[adapter->sc_nvifs - 1]);
+  }
+#else
+  vif = rsi_get_sta_vif(adapter);
+  if (vif) {
+    ieee80211_connection_loss(vif);
+  }
+#endif
+}
+
+/**
+ * rsi_start_eapol4_confirm_work() - Arm watchdog for missing LMAC EAPOL4 confirm.
+ *
+ * @common: Pointer to the driver private structure.
+ */
+void rsi_start_eapol4_confirm_work(struct rsi_common *common)
+{
+  mod_delayed_work(system_wq, &common->eapol4_confirm_work, msecs_to_jiffies(EAPOL4_CONFIRM_TIMEOUT_MS));
+  rsi_dbg(INFO_ZONE, "Started EAPOL4 confirm delayed_work (%u ms)\n", EAPOL4_CONFIRM_TIMEOUT_MS);
+}
+
+/**
+ * rsi_stop_eapol4_confirm_work() - Cancel EAPOL4 confirm watchdog (may sleep).
+ *
+ * @common: Pointer to the driver private structure.
+ */
+void rsi_stop_eapol4_confirm_work(struct rsi_common *common)
+{
+  cancel_delayed_work_sync(&common->eapol4_confirm_work);
 }
 
 /**
@@ -2653,10 +2744,12 @@ int rsi_send_rx_filter_frame(struct rsi_common *common, u16 rx_filter_word)
     rsi_dbg(ERR_ZONE, "%s: Failed in allocation of skb\n", __func__);
     return -ENOMEM;
   }
-
+  if (common->sw_bmiss_enable) {
+    /* Reset DISALLOW_BEACONS bit before sending to firmware */
+    rx_filter_word &= ~DISALLOW_BEACONS;
+  }
   memset(skb->data, 0, FRAME_DESC_SZ);
-  mgmt_frame = (struct rsi_mac_frame *)skb->data;
-
+  mgmt_frame               = (struct rsi_mac_frame *)skb->data;
   mgmt_frame->desc_word[0] = cpu_to_le16(RSI_WIFI_MGMT_Q << 12);
   mgmt_frame->desc_word[1] = cpu_to_le16(SET_RX_FILTER);
   mgmt_frame->desc_word[4] = cpu_to_le16(rx_filter_word);
@@ -2680,10 +2773,10 @@ int rsi_send_ps_request(struct rsi_hw *adapter, bool enable)
 {
   struct rsi_common *common = adapter->priv;
 #ifndef CONFIG_STA_PLUS_AP
-  struct ieee80211_bss_conf *bss;
+  struct ieee80211_vif *vif = adapter->vifs[0];
 #else
   struct ieee80211_vif *sta_vif = rsi_get_sta_vif(common->priv);
-  struct ieee80211_bss_conf *sta_bss;
+  struct ieee80211_vif *vif     = sta_vif;
 #endif
   struct rsi_request_ps *ps   = NULL;
   struct rsi_ps_info *ps_info = NULL;
@@ -2723,23 +2816,18 @@ int rsi_send_ps_request(struct rsi_hw *adapter, bool enable)
   ps->ps_sleep.num_bcns_per_lis_int = cpu_to_le16(ps_info->num_bcns_per_lis_int);
   ps->ps_sleep.sleep_duration       = cpu_to_le32(ps_info->deep_sleep_wakeup_period);
 
-  if (adapter->sc_nvifs == 0) {
+  if (!adapter->sc_nvifs) {
     assoc = false;
 #ifdef CONFIG_STA_PLUS_AP
   } else if (!sta_vif) {
     assoc = true;
 #endif
   } else {
-#ifndef CONFIG_STA_PLUS_AP
-    bss = &adapter->vifs[0]->bss_conf;
-    if (bss->assoc)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+    assoc = vif && vif->bss_conf.assoc;
 #else
-    sta_bss = &sta_vif->bss_conf;
-    if (sta_bss->assoc)
+    assoc = vif && vif->cfg.assoc;
 #endif
-      assoc = true;
-    else
-      assoc = false;
   }
   if (assoc)
     ps->ps_sleep.connected_sleep = CONNECTED_SLEEP;
@@ -3106,11 +3194,11 @@ static void channel_change_event(unsigned long priv)
 #else
 static void channel_change_event(struct timer_list *t)
 {
-  struct rsi_common *common = from_timer(common, t, scan_timer);
+  struct rsi_common *common = rsi_timer_from_timer(common, t, scan_timer);
 #endif
 
   rsi_set_event(&common->chan_change_event);
-  del_timer(&common->scan_timer);
+  rsi_timer_del(&common->scan_timer);
 }
 
 static int init_channel_timer(struct rsi_hw *adapter, u32 timeout)
@@ -3120,7 +3208,7 @@ static int init_channel_timer(struct rsi_hw *adapter, u32 timeout)
   rsi_reset_event(&common->chan_change_event);
   if (timer_pending(&common->scan_timer)) {
     rsi_dbg(ERR_ZONE, "%s : Timer Pending. This Case Should not occur\n", __func__);
-    del_timer(&common->scan_timer);
+    rsi_timer_del(&common->scan_timer);
   }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
   init_timer(&common->scan_timer);
@@ -3340,9 +3428,34 @@ void rsi_scan_start(struct work_struct *work)
       init_channel_timer(common->priv, PASSIVE_SCAN_DURATION);
     } else {
       if ((cur_chan->flags & IEEE80211_CHAN_NO_IR) || (cur_chan->flags & IEEE80211_CHAN_RADAR)) {
+
+        common->beacon_recvd_on_ch = false;
         /* DFS Channel */
         /* Program passive scan duration */
         init_channel_timer(common->priv, PASSIVE_SCAN_DURATION);
+
+        /* For hidden SSID on DFS: After passive scan, send directed probe */
+        if (scan_req->n_ssids > 0) {
+          /* Wait for passive scan to complete */
+          status = rsi_wait_event(&common->chan_change_event, msecs_to_jiffies(PASSIVE_SCAN_DURATION * 15));
+          if (status >= 0 && common->scan_in_prog && !common->iface_down) {
+            rsi_reset_event(&common->chan_change_event);
+            if (common->beacon_recvd_on_ch) {
+              for (jj = 0; jj < scan_req->n_ssids; jj++) {
+                if (scan_req->ssids[jj].ssid_len > 0) {
+                  rsi_dbg(ERR_ZONE, "DFS ch %d: Sending probe for hidden SSID\n", cur_chan->hw_value);
+                  rsi_send_probe_request(common, scan_req, jj, cur_chan->hw_value);
+                  rsi_reset_event(&common->probe_cfm_event);
+                  rsi_wait_event(&common->probe_cfm_event, msecs_to_jiffies(50));
+                }
+              }
+              init_channel_timer(common->priv, ACTIVE_SCAN_DURATION / 2);
+            } else {
+              init_channel_timer(common->priv, ACTIVE_SCAN_DURATION / 2);
+              rsi_dbg(ERR_ZONE, "DFS ch %d: No beacon, Skipping probe\n", cur_chan->hw_value);
+            }
+          }
+        }
       } else if (!adapter->auto_chan_sel) {
         /* Send probe request */
         for (jj = 0; jj < scan_req->n_ssids; jj++) {
@@ -3374,7 +3487,7 @@ void rsi_scan_start(struct work_struct *work)
     rsi_reset_event(&common->chan_change_event);
   }
 
-  del_timer(&common->scan_timer);
+  rsi_timer_del(&common->scan_timer);
   common->scan_in_prog = false;
 #ifndef CONFIG_RSI_P2P
   if (common->default_deep_sleep_enable && !adapter->rx_stats_inprog && vif->type != NL80211_IFTYPE_AP
@@ -3665,8 +3778,10 @@ static int rsi_handle_ta_confirm(struct rsi_common *common, u8 *msg)
             ieee80211_wake_queues(adapter->hw);
             complete(&common->wlan_init_completion);
             common->reinit_hw = false;
-          } else
+          } else if (common->driver_mode != RF_EVAL_MODE_ON)
             return rsi_mac80211_attach(common);
+          else
+            return 0;
         }
       } else {
         rsi_dbg(INFO_ZONE, "%s: Received bb_rf cfm in %d state\n", __func__, common->fsm_state);
@@ -3691,6 +3806,17 @@ static int rsi_handle_ta_confirm(struct rsi_common *common, u8 *msg)
 
     case SCAN_REQUEST:
       rsi_dbg(INFO_ZONE, "Scan confirm.\n");
+      if (common->csa_in_prog) {
+        rsi_dbg(INFO_ZONE, "CSA Channel Switch confirm received.\n");
+        rsi_hex_dump(INFO_ZONE, "CSA Confirm", &msg[0], 16);
+        /* Update the current channel */
+        if (common->csa_channel) {
+          common->channel = common->csa_channel->hw_value;
+          rsi_dbg(ERR_ZONE, "CSA: Successfully switched to channel %d\n", common->channel);
+        }
+        rsi_set_event(&common->csa_complete_event);
+      }
+
 #ifdef CONFIG_STA_PLUS_AP
       if (!vif) {
         /* FIXME: vif can be destroyed just before getting confirm from LMAC */
@@ -3748,6 +3874,12 @@ static int rsi_handle_ta_confirm(struct rsi_common *common, u8 *msg)
           if ((common->bgscan_info.num_user_channels > MAX_BG_CHAN_FROM_USER) && (!common->debugfs_bgscan)) {
             rsi_send_bgscan_params(common, 0);
             common->bgscan_en = 0;
+            /*
+             * Dual-band (>24 ch) stops BGSCAN after the 2nd batch by design.
+             * Re-arm first_bgscan so the next host/wpa scan can restart the
+             * two-phase flow. Single-band does not enter this path.
+             */
+            common->first_bgscan = 1;
           }
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0))
           info.aborted = false;
@@ -3774,7 +3906,11 @@ static int rsi_handle_ta_confirm(struct rsi_common *common, u8 *msg)
           common->hwscan_en = false;
         }
 #ifdef CONFIG_STA_PLUS_AP
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
       } else if (common->vap_mode == CONCURRENT && rsi_get_sta_vif(adapter)->bss_conf.assoc) {
+#else
+      } else if (common->vap_mode == CONCURRENT && rsi_get_sta_vif(adapter)->cfg.assoc) {
+#endif
         mutex_lock(&common->bgscan_lock);
         common->bgscan_in_prog = false;
         rsi_send_bgscan_params(common, 0);
@@ -3983,19 +4119,46 @@ int rsi_mgmt_pkt_recv(struct rsi_common *common, u8 *msg)
       }
       if ((msg[15] & 0xff) == EAPOL4_CONFIRM) {
         u8 status = msg[12];
+        struct sk_buff *skb;
 
-        if (status) {
+        /*
+         * LMAC status: non-zero = TX succeeded (AP ACKed).
+         * On failure (status == 0), leave eapol4_skb and the confirm
+         * watchdog running so rsi_eapol4_confirm_timeout_work() owns
+         * TX status + connection_loss.
+         */
+        if (!status) {
+          break;
+        }
+
+        /*
+         * Claim skb before stopping the watchdog so timeout work cannot
+         * complete the same frame. If take returns NULL, timeout (or another
+         * path) already owned completion -- ignore late confirm side effects.
+         */
+        skb = rsi_take_eapol4_skb(common);
+        rsi_stop_eapol4_confirm_work(common);
+        if (!skb) {
+          break;
+        }
+
+        /* rsi_indicate_tx_status: 0 = set IEEE80211_TX_STAT_ACK. */
+        rsi_indicate_tx_status(common->priv, skb, 0);
+
 #ifndef CONFIG_STA_PLUS_AP
-          if (vif->type == NL80211_IFTYPE_STATION) {
+        if (vif->type == NL80211_IFTYPE_STATION) {
 #else
-          if (sta_vif->type == NL80211_IFTYPE_STATION) {
+        if (sta_vif->type == NL80211_IFTYPE_STATION) {
 #endif
-            rsi_dbg(ERR_ZONE, "EAPOL 4 confirm\n");
-            common->start_bgscan   = 1;
-            common->eapol4_confirm = 1;
-            if (!rsi_send_block_unblock_frame(common, false))
-              common->hw_data_qs_blocked = false;
-          }
+          rsi_dbg(ERR_ZONE, "EAPOL 4 confirm\n");
+          common->start_bgscan   = 1;
+          common->eapol4_confirm = 1;
+          if (!rsi_send_block_unblock_frame(common, false))
+            common->hw_data_qs_blocked = false;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+          if (adapter->user_ps_en)
+            rsi_enable_ps(adapter);
+#endif
         }
       }
       if ((msg[15] & 0xFF) == NULLDATA_CONFIRM) {
@@ -4308,10 +4471,13 @@ int rsi_set_bb_rf_values(struct rsi_hw *adapter)
   if (common->driver_mode == E2E_MODE) {
 #ifndef CONFIG_STA_PLUS_AP
     struct ieee80211_vif *vif = adapter->vifs[0];
-    bool assoc                = vif && vif->bss_conf.assoc;
 #else
-    struct ieee80211_vif *sta_vif = rsi_get_sta_vif(adapter);
-    bool assoc                    = sta_vif && sta_vif->bss_conf.assoc;
+    struct ieee80211_vif *vif = rsi_get_sta_vif(adapter);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+    bool assoc = vif && vif->bss_conf.assoc;
+#else
+    bool assoc                = vif && vif->cfg.assoc;
 #endif
 
     if (!assoc && adapter->ps_state == PS_ENABLED)
